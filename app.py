@@ -1,5 +1,4 @@
 import os
-# Fixing that memory crash permanently
 os.environ["OPENBLAS_NUM_THREADS"] = "1" 
 
 import streamlit as st
@@ -8,83 +7,118 @@ import re
 import requests
 import json
 
-# --- POWERED BY SERPER API ---
+# --- CORE LOGIC FUNCTIONS ---
 
-def search_leads_via_api(industry, city, platform, api_key):
-    url = "https://google.serper.dev/search"
-    
-    # This specifically hunts for Indian mobile numbers on social pages
-    query = f'site:{platform} "{industry}" "{city}" "+91"'
-    
+def fetch_leads(query, api_key, search_type="organic"):
+    """Generic fetcher for both Maps and Social Media."""
+    url = f"https://google.serper.dev/{search_type}"
     payload = json.dumps({"q": query})
-    headers = {
-        'X-API-KEY': api_key,
-        'Content-Type': 'application/json'
-    }
-
+    headers = {'X-API-KEY': api_key, 'Content-Type': 'application/json'}
+    
     try:
-        response = requests.request("POST", url, headers=headers, data=payload, timeout=10)
-        if response.status_code != 200:
-            return []
-            
-        data = response.json()
-        leads = []
-        
-        # Organic results are the real gold mine
-        for result in data.get('organic', []):
-            snippet = result.get('snippet', '')
-            # Regex for Indian mobile numbers starting with 6-9
-            phone = re.search(r'[6-9]\d{9}', snippet)
-            
-            if phone:
-                leads.append({
-                    "Clinic/Name": result.get('title', 'Dentist'),
-                    "Phone": phone.group(),
-                    "Platform": platform,
-                    "WhatsApp": f"https://wa.me/91{phone.group()}"
-                })
-        return leads
-    except Exception:
-        return []
+        response = requests.post(url, headers=headers, data=payload, timeout=15)
+        return response.json()
+    except:
+        return {}
 
-# --- STREAMLIT UI ---
+def parse_social_leads(data, platform):
+    leads = []
+    for result in data.get('organic', []):
+        snippet = result.get('snippet', '')
+        phone = re.search(r'[6-9]\d{9}', snippet)
+        if phone:
+            leads.append({
+                "Business Name": result.get('title', 'Unknown'),
+                "Phone": phone.group(),
+                "Source": platform,
+                "Action Link": f"https://wa.me/91{phone.group()}"
+            })
+    return leads
 
-st.set_page_config(page_title="Dentist Lead Pro", layout="wide")
-st.title("🦷 Dentist Lead Scraber (API Powered)")
-st.markdown("Directly fetching verified numbers from Facebook & Instagram.")
+def parse_maps_leads(data):
+    leads = []
+    for result in data.get('places', []):
+        phone = result.get('phoneNumber')
+        if phone:
+            # Clean non-digits
+            clean_phone = re.sub(r'\D', '', phone)[-10:]
+            leads.append({
+                "Business Name": result.get('title'),
+                "Phone": clean_phone,
+                "Source": "Google Maps",
+                "Action Link": f"https://www.google.com/maps/place/?q=place_id:{result.get('cid')}"
+            })
+    return leads
 
-# Your API Key is now hardcoded here for your personal use
-API_KEY = "7ab11ec8c0050913c11a96062dc1e295af9743f0"
+# --- UI SETUP ---
+st.set_page_config(page_title="Pro Scraber SaaS", layout="wide")
+
+# 1. SIMPLE LOGIN
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.title("🔐 SaaS Login")
+    password = st.text_input("Enter Access Code", type="password")
+    if st.button("Unlock Tool"):
+        if password == "Salem123": # Change this to your desired password
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Wrong code, brother!")
+    st.stop()
+
+# --- MAIN APP ---
+st.title("🚀 Multi-Source Lead Scraber")
 
 with st.sidebar:
-    st.header("Search Settings")
-    industry = st.text_input("Industry", "Dentist")
+    st.header("⚙️ Configuration")
+    user_api_key = st.text_input("Serper API Key", value="7ab11ec8c0050913c11a96062dc1e295af9743f0", type="password")
+    
+    st.divider()
+    st.header("🔍 Search Parameters")
+    industry = st.text_input("Industry/Business", "Dentist")
     city = st.text_input("City", "Salem")
-    search_btn = st.button("Generate Leads")
+    
+    source = st.radio("Select Source", ["Social Media (FB/IG)", "Google Maps"])
+    
+    search_btn = st.button("Extract Leads")
 
 if search_btn:
-    with st.spinner(f"Scraping {industry} leads in {city}..."):
-        # Fetching from both platforms
-        fb_leads = search_leads_via_api(industry, city, "facebook.com", API_KEY)
-        ig_leads = search_leads_via_api(industry, city, "instagram.com", API_KEY)
-        
-        total_leads = fb_leads + ig_leads
-        
-        if total_leads:
-            df = pd.DataFrame(total_leads).drop_duplicates(subset=['Phone'])
-            st.success(f"🔥 Found {len(df)} High-Quality Leads!")
+    if not user_api_key:
+        st.error("Please enter an API Key!")
+    else:
+        with st.spinner("Extracting data..."):
+            all_results = []
             
-            # Making the WhatsApp link clickable in the table
-            st.dataframe(
-                df,
-                column_config={
-                    "WhatsApp": st.column_config.LinkColumn("Message Now")
-                },
-                use_container_width=True
-            )
+            if source == "Social Media (FB/IG)":
+                # Search FB
+                fb_raw = fetch_leads(f'site:facebook.com "{industry}" "{city}" "+91"', user_api_key, "search")
+                all_results += parse_social_leads(fb_raw, "Facebook")
+                # Search IG
+                ig_raw = fetch_leads(f'site:instagram.com "{industry}" "{city}" "+91"', user_api_key, "search")
+                all_results += parse_social_leads(ig_raw, "Instagram")
             
-            # Download button for your CSV backup
-            csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Download Lead List", csv, f"{city}_leads.csv", "text/csv")
-        else:
-            st.error("Still no leads found. Check if your API key has credits left!")
+            else:
+                # Search Google Maps
+                maps_raw = fetch_leads(f"{industry} in {city}", user_api_key, "maps")
+                all_results += parse_maps_leads(maps_raw)
+
+            if all_results:
+                df = pd.DataFrame(all_results).drop_duplicates(subset=['Phone'])
+                
+                # METRICS
+                st.success(f"Successfully extracted {len(df)} leads!")
+                
+                # DISPLAY TABLE
+                st.dataframe(
+                    df,
+                    column_config={"Action Link": st.column_config.LinkColumn("Visit/Message")},
+                    use_container_width=True
+                )
+                
+                # DOWNLOAD
+                csv = df.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Download All Data", csv, f"{industry}_{city}_leads.csv", "text/csv")
+            else:
+                st.warning("No data found. Try changing your search keywords.")
