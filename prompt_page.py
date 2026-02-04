@@ -46,3 +46,15 @@ if st.button("💎 Generate & Send to Sniper"):
         st.info("🎯 Now click on 'Lead Sniper' in the sidebar to start.")
     else:
         st.error("No PIN codes found for this combination.")
+
+# Inside your 'Generate & Send to Sniper' button code:
+if st.button("💎 Generate & Send to Sniper"):
+    # ... existing pin logic ...
+    if results:
+        pin_string = ", ".join([str(p) for p in results])
+        
+        # SAVE BOTH PINs AND THE CATEGORY
+        st.session_state['sniping_pincodes'] = pin_string
+        st.session_state['sniping_category'] = industry  # <--- ADD THIS LINE
+        
+        st.success(f"✅ Found {len(results)} PINs for {sub_district} and set category to {industry}!")
