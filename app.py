@@ -8,7 +8,7 @@ import requests
 import json
 import time
 
-# --- THE HUNTER ---
+# --- 1. THE DATA HUNTER ---
 def extract_email(text):
     match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
     return match.group(0) if match else "Not Found"
@@ -24,7 +24,7 @@ def fetch_and_process_pro(query, api_key, target_source, target_num):
     
     for page in range(pages_to_run):
         current_page = page + 1
-        status_msg.info(f"🔍 **Scanning Page {current_page} of {pages_to_run}... (Total: {len(all_leads)})**")
+        status_msg.info(f"🔍 **Scanning Page {current_page} of {pages_to_run}... (Total found: {len(all_leads)})**")
         
         url = f"https://google.serper.dev/{search_type}"
         payload = json.dumps({"q": query, "num": 20, "page": current_page})
@@ -36,14 +36,13 @@ def fetch_and_process_pro(query, api_key, target_source, target_num):
             items = data.get('places' if is_maps else 'organic', [])
             
             if not items:
-                continue # Try next page if this is empty
+                continue 
                 
             for index, item in enumerate(items):
                 snippet = item.get('snippet', '') if not is_maps else item.get('address', '')
                 title = item.get('title', 'Unknown')
                 phone_raw = item.get('phoneNumber') if is_maps else re.search(r'[6-9]\d{9}', snippet)
                 
-                # Capture Rank and Website
                 rank = index + 1 + (page * 20)
                 website = item.get('website', 'Not Found') if is_maps else item.get('link', 'Not Found')
                 
@@ -56,57 +55,75 @@ def fetch_and_process_pro(query, api_key, target_source, target_num):
                         "Phone": clean_phone,
                         "Email": extract_email(snippet),
                         "Website": website,
-                        "Location": query.split("in")[-1].strip(),
                         "WhatsApp": f"https://wa.me/91{clean_phone}"
                     })
             
             prog_bar.progress(current_page / pages_to_run)
-            time.sleep(1.5)
-            
+            time.sleep(1)
         except:
             break
             
     return all_leads
 
-# --- THE UI ---
-st.set_page_config(page_title="Nuera Global Lead Pro", layout="wide")
+# --- 2. THE UI ---
+st.set_page_config(page_title="Nuera TN Lead Pro", layout="wide")
 
-# (Login logic remains the same...)
+# Login Logic
+if "auth" not in st.session_state:
+    st.session_state.auth = False
 
-st.title("🌍 Nuera Global Lead Scraber")
+if not st.session_state.auth:
+    st.title("🔐 License Portal")
+    code = st.text_input("Enter License Key", type="password")
+    if st.button("Access"):
+        if code == "Salem123":
+            st.session_state.auth = True
+            st.rerun()
+    st.stop()
+
+st.title("🚀 Nuera TN Lead Scraber")
+
+# Location Data
+tn_districts = ["Salem", "Chennai", "Coimbatore", "Madurai", "Trichy", "Erode", "Tiruppur", "Vellore", "Thanjavur", "Tuticorin", "Tirunelveli"]
 
 with st.sidebar:
     st.header("📍 Location Filters")
-    country = st.selectbox("Country", ["India", "USA", "UK", "UAE"])
-    state = st.text_input("State", "Tamil Nadu")
-    district = st.text_input("District/City", "Salem")
+    # This fixed the NameError by ensuring api_key is always defined
+    api_key_input = st.text_input("API Key", value="7ab11ec8c0050913c11a96062dc1e295af9743f0", type="password")
+    
+    country = "India"
+    state = "Tamil Nadu"
+    district = st.selectbox("Select TN District", tn_districts)
     
     st.divider()
-    industry = st.text_input("Industry", "Dentist")
-    target = st.selectbox("Source", ["Google Maps", "JustDial", "LinkedIn", "Facebook"])
+    industry = st.text_input("Business Type", "Dentist")
+    target = st.selectbox("Source", ["Google Maps", "Facebook", "LinkedIn", "JustDial"])
     depth = st.select_slider("Lead Target", options=[20, 40, 60, 80, 100], value=40)
     
-    start_scan = st.button("🔥 Run Global Scan")
+    start_scan = st.button("🔥 Run Scan")
 
 if start_scan:
-    # BUILD POWERFUL QUERY
-    full_location = f"{district}, {state}, {country}"
+    full_loc = f"{district}, {state}, {country}"
     
+    # Building the Query
     if target == "Google Maps":
-        search_query = f"{industry} in {full_location}"
+        q = f"{industry} in {full_loc}"
     else:
-        domains = {"JustDial": "justdial.com", "LinkedIn": "linkedin.com", "Facebook": "facebook.com"}
-        search_query = f'site:{domains[target]} "{industry}" "{full_location}" "+91"'
+        domains = {"Facebook": "facebook.com", "LinkedIn": "linkedin.com", "JustDial": "justdial.com"}
+        q = f'site:{domains[target]} "{industry}" "{full_loc}" "+91"'
             
-    results = fetch_and_process_pro(search_query, api_key, target, depth)
+    # Passing api_key_input directly to fix the NameError
+    results = fetch_and_process_pro(q, api_key_input, target, depth)
     
     if results:
-        final_df = pd.DataFrame(results).drop_duplicates(subset=['Phone'])
+        df = pd.DataFrame(results).drop_duplicates(subset=['Phone'])
         
         m1, m2, m3 = st.columns(3)
-        m1.metric("Leads Found", len(final_df))
-        m2.metric("Target", full_location)
-        m3.metric("Emails Found", len(final_df[final_df['Email'] != "Not Found"]))
+        m1.metric("Leads Found", len(df))
+        m2.metric("Location", district)
+        m3.metric("Emails Found", len(df[df['Email'] != "Not Found"]))
 
-        st.dataframe(final_df, use_container_width=True)
-        st.download_button("📥 Export CSV", final_df.to_csv(index=False).encode('utf-8'), f"{district}_leads.csv", "text/csv")
+        st.dataframe(df, use_container_width=True)
+        st.download_button("📥 Export CSV", df.to_csv(index=False).encode('utf-8'), f"{district}_leads.csv", "text/csv")
+    else:
+        st.error("No data found. Check your API or try another district.")
