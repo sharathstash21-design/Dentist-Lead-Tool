@@ -133,6 +133,18 @@ if start_btn:
             csv_data, 
             f"leads_{industry}.csv", 
             "text/csv",
+
+            with st.sidebar:
+    st.header("⚙️ Sniper Settings")
+    
+    # GET THE CATEGORY FROM THE SHARED BRAIN
+    # Default to "Dental Clinic" if nothing was sent
+    saved_category = st.session_state.get('sniping_category', "Dental Clinic")
+    industry = st.text_input("Business Type", value=saved_category, key="ind_sniper")
+    
+    # GET THE PINs
+    ready_pins = st.session_state.get('sniping_pincodes', "636001, 636007")
+    pin_input = st.text_area("Target PIN Codes", value=ready_pins, key="pins_sniper")
             key="download_sniper"
         )
     else:
