@@ -5,110 +5,90 @@ import requests
 import json
 import time
 
-# --- 1. THE DATA HUNTER ---
+# --- 1. DATA CLEANER ---
 def extract_email(text):
     match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
     return match.group(0) if match else "Not Available"
 
-def fetch_by_pin_searchapi(query, pin, api_key, target_source):
-    """Fetches leads using SearchAPI.io engine."""
-    # SearchAPI uses 'google_maps' for local business listings
-    is_maps = (target_source == "Google Maps")
-    engine = "google_maps" if is_maps else "google"
-    
+def fetch_searchapi(query, pin, api_key, target_source):
     url = "https://www.searchapi.io/api/v1/search"
+    is_maps = (target_source == "Google Maps")
     
-    # We add 'India' to ensure pinpoint accuracy
-    refined_q = f"{query} {pin} India"
-    
+    # We use 'google_maps' engine for Maps and 'google' for Search
     params = {
-        "engine": engine,
-        "q": refined_q,
+        "engine": "google_maps" if is_maps else "google",
+        "q": f"{query} {pin} India",
         "api_key": api_key,
-        "gl": "in", # Sets location to India
-        "hl": "en"  # Sets language to English
+        "gl": "in",
+        "hl": "en"
     }
     
     try:
         response = requests.get(url, params=params, timeout=20)
         data = response.json()
         
-        # SearchAPI returns 'places' for Google Maps engine
-        if is_maps:
-            return data.get('places', [])
-        else:
-            # For standard Google Search, it returns 'organic_results'
-            return data.get('organic_results', [])
+        # DEBUG: Let's see if the API actually sent something
+        if "error" in data:
+            st.error(f"API Error: {data['error']}")
+            return []
+
+        # UNIVERSAL FINDER: Look in all possible result folders
+        results = data.get('places', []) or \
+                  data.get('organic_results', []) or \
+                  data.get('local_results', [])
+        
+        return results
     except Exception as e:
-        st.error(f"SearchAPI Connection Error: {e}")
+        st.error(f"Connection Error: {e}")
         return []
 
-# --- 2. THE UI ---
-st.title("🎯 Nuera PIN Code Sniper")
-st.markdown("### *Powered by SearchAPI.io*")
-
-# Check for data from Generator
-default_cat = st.session_state.get('sniping_category', "Dental Clinic")
-default_pins = st.session_state.get('sniping_pincodes', "")
+# --- 2. UI ---
+st.title("🎯 Nuera Universal Sniper")
 
 with st.sidebar:
-    st.header("⚙️ Sniper Settings")
-    # Using your new SearchAPI key
-    api_key_val = st.text_input("SearchAPI Key", value="E7PCYwNsJvWgmyGkqDcMdfYN", type="password", key="api_snip")
-    
-    industry = st.text_input("Business Type", value=default_cat, key="ind_snip")
-    pin_input = st.text_area("PIN Codes", value=default_pins, key="pins_snip")
-    
-    target_src = st.selectbox("Source", ["Google Maps", "Google Search"], key="src_snip")
-    start_btn = st.button("🚀 Start Sniper Scan", key="run_snip")
+    st.header("⚙️ Settings")
+    api_key_val = st.text_input("SearchAPI Key", value="E7PCYwNsJvWgmyGkqDcMdfYN", type="password")
+    industry = st.text_input("Business Type", value=st.session_state.get('sniping_category', "Dentist"))
+    pin_input = st.text_area("PIN Codes", value=st.session_state.get('sniping_pincodes', ""))
+    target_src = st.selectbox("Source", ["Google Maps", "Google Search"])
+    start_btn = st.button("🚀 Start Sniper Scan")
 
 if start_btn:
-    if not pin_input:
-        st.error("⚠️ No PIN codes found! Go to the Prompt Generator first.")
-        st.stop()
-        
     pins = [p.strip() for p in pin_input.replace("\n", ",").split(",") if p.strip()]
     all_leads = []
     
-    status_msg = st.empty()
     progress_bar = st.progress(0)
+    status_msg = st.empty()
 
     for idx, pin in enumerate(pins):
-        status_msg.info(f"📍 Sniping PIN: {pin} ({idx+1}/{len(pins)})")
-        
-        raw_items = fetch_by_pin_searchapi(industry, pin, api_key_val, target_src)
+        status_msg.info(f"📍 Sniping PIN: {pin}...")
+        raw_items = fetch_searchapi(industry, pin, api_key_val, target_src)
         
         for item in raw_items:
-            # SearchAPI 'places' fields are slightly different
+            # SearchAPI uses different names for Phone and Website
             name = item.get('title', 'Unknown')
-            address = item.get('address', '')
-            site = item.get('website', 'Not Available')
-            phone_raw = item.get('phone') # SearchAPI Maps results usually have 'phone'
-            
-            # Use snippet for email extraction if not in maps
-            snippet = item.get('snippet', address)
-            
+            # Look for phone in multiple possible fields
+            phone_raw = item.get('phone') or item.get('phone_number')
+            site = item.get('website') or item.get('link', 'Not Available')
+            address = item.get('address', item.get('snippet', ''))
+
             if phone_raw:
-                # Clean phone to 10 digits
                 clean_phone = re.sub(r'\D', '', str(phone_raw))[-10:]
-                
                 all_leads.append({
                     "PIN Code": pin,
                     "Business Name": name,
                     "Phone": clean_phone,
-                    "Email": extract_email(snippet),
+                    "Email": extract_email(str(item)),
                     "Website": site,
-                    "Address": address,
                     "WhatsApp": f"https://wa.me/91{clean_phone}"
                 })
         
         progress_bar.progress((idx + 1) / len(pins))
-        time.sleep(1) # SearchAPI is fast, but we stay safe
+        time.sleep(1)
 
     if all_leads:
         df = pd.DataFrame(all_leads).drop_duplicates(subset=['Phone'])
-        st.success(f"✅ Total leads sniped: {len(df)}")
+        st.success(f"✅ Found {len(df)} Leads!")
         st.dataframe(df, use_container_width=True)
-        st.download_button("📥 Download Data", df.to_csv(index=False).encode('utf-8'), "leads.csv", "text/csv")
     else:
-        st.error("❌ No results found. Check your SearchAPI credits or try a different PIN.")
+        st.error("❌ No results found. Try switching 'Google Maps' to 'Google Search' or use a different keyword.")
