@@ -43,6 +43,7 @@ if not st.session_state.logged_in:
 
 # --- 5. THE MAIN DASHBOARD (Only shows if logged_in is True) ---
 st.sidebar.title("🎮 Nuera Command Center")
+# This creates the navigation menu
 choice = st.sidebar.radio("Go To:", ["Prompt Generator", "Lead Sniper", "Admin Panel"])
 
 st.sidebar.divider()
@@ -52,28 +53,27 @@ if st.sidebar.button("Logout"):
     st.session_state.logged_in = False
     st.rerun()
 
-# --- 6. TOOL LOADING LOGIC ---
+# --- 6. THE "UNLOCKER" LOGIC ---
+# This part actually opens your other files and shows them on screen
 if choice == "Prompt Generator":
-    st.title("📝 Prompt Generator")
     try:
+        # This tells Python to read and run your prompt_page.py file
         with open("prompt_page.py", encoding="utf-8") as f:
             exec(f.read())
     except Exception as e:
-        st.error(f"Error loading Generator: {e}")
+        st.error(f"Thambi, I couldn't find prompt_page.py! Error: {e}")
 
 elif choice == "Lead Sniper":
-    st.title("🎯 Precious Lead Sniper")
     try:
+        # This tells Python to read and run your leads_page.py file
         with open("leads_page.py", encoding="utf-8") as f:
             exec(f.read())
     except Exception as e:
-        st.error(f"Error loading Sniper: {e}")
+        st.error(f"Thambi, I couldn't find leads_page.py! Error: {e}")
 
 elif choice == "Admin Panel":
-    # Only you can see this
     if st.session_state.user_email == "ngo.senthil@gmail.com":
         st.title("👨‍💼 Admin Control Room")
-        st.write("Welcome, Boss. Manage your credits here.")
-        # We can add credit update logic here later
+        st.write("Welcome, Boss. You can manage user credits here.")
     else:
-        st.error("🚫 Restricted Access.")
+        st.error("🚫 Access Denied. Only for the Master Sniper!")
