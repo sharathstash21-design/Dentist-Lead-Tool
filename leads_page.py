@@ -1,119 +1,56 @@
 import streamlit as st
+import gspread
+from google.oauth2.service_account import Credentials
 import pandas as pd
-import re
-import requests
-import json
-import time
 
-# --- 1. DATA EXTRACTION TOOLS ---
-def extract_email(text):
-    match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
-    return match.group(0) if match else "Not Available"
+# --- 1. CONNECTION TO GOOGLE SHEETS ---
+# Use your service account JSON file or Streamlit Secrets
+scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+gc = gspread.authorize(creds)
+sh = gc.open("Nuera_Users").sheet1
 
-def fetch_precious_data(query, pin, api_key, target_source):
-    url = "https://www.searchapi.io/api/v1/search"
-    is_maps = (target_source == "Google Maps")
+# --- 2. AUTHENTICATION FUNCTIONS ---
+def check_login(email, password):
+    data = sh.get_all_records()
+    for row in data:
+        if row['email'] == email and str(row['password']) == password:
+            return row['credits']
+    return None
+
+def update_credits(email, new_total):
+    cell = sh.find(email)
+    sh.update_cell(cell.row, 3, new_total) # Update Column C (Credits)
+
+# --- 3. LOGIN UI ---
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+
+if not st.session_state.logged_in:
+    st.title("🔐 Nuera Sniper Login")
+    email = st.text_input("Email")
+    pwd = st.text_input("Password", type="password")
+    if st.button("Login"):
+        credits = check_login(email, pwd)
+        if credits is not None:
+            st.session_state.logged_in = True
+            st.session_state.user_email = email
+            st.session_state.user_credits = credits
+            st.rerun()
+        else:
+            st.error("Invalid Email or Password")
+else:
+    # --- 4. THE SNIPER DASHBOARD ---
+    st.sidebar.success(f"👤 {st.session_state.user_email}")
+    st.sidebar.metric("Remaining Credits", st.session_state.user_credits)
     
-    params = {
-        "engine": "google_maps" if is_maps else "google",
-        "q": f"{query} {pin} India",
-        "api_key": api_key,
-        "gl": "in",
-        "hl": "en"
-    }
-    
-    try:
-        response = requests.get(url, params=params, timeout=20)
-        data = response.json()
-        
-        # SearchAPI organizes Maps results in 'places' or 'local_results'
-        results = data.get('places', []) or data.get('local_results', [])
-        if not results and not is_maps:
-            results = data.get('organic_results', [])
-            
-        return results
-    except:
-        return []
+    if st.session_state.user_credits <= 0:
+        st.warning("⚠️ Out of credits! Please contact admin to recharge.")
+        st.stop()
 
-# --- 2. THE UI ---
-st.title("🎯 Nuera Precious Lead Sniper")
-
-with st.sidebar:
-    st.header("⚙️ Sniper Settings")
-    api_key_val = st.text_input("SearchAPI Key", value="E7PCYwNsJvWgmyGkqDcMdfYN", type="password", key="api_snip")
-    industry = st.text_input("Business Type", value=st.session_state.get('sniping_category', "Dentist"), key="ind_snip")
-    pin_input = st.text_area("PIN Codes", value=st.session_state.get('sniping_pincodes', ""), key="pins_snip")
-    target_src = st.selectbox("Source", ["Google Maps", "Google Search"], key="src_snip")
-    start_btn = st.button("🚀 Start Precious Extraction", key="run_snip")
-
-if start_btn:
-    pins = [p.strip() for p in pin_input.replace("\n", ",").split(",") if p.strip()]
-    all_leads = []
-    
-    progress_bar = st.progress(0)
-    status_msg = st.empty()
-
-    for idx, pin in enumerate(pins):
-        status_msg.info(f"📍 Sniping PIN: {pin} ({idx+1}/{len(pins)})")
-        raw_items = fetch_precious_data(industry, pin, api_key_val, target_src)
-        
-        for rank, item in enumerate(raw_items, 1):
-            # Extracting all the 'Precious' fields from SearchAPI
-            phone_raw = item.get('phone') or item.get('phone_number')
-            
-            if phone_raw:
-                clean_phone = re.sub(r'\D', '', str(phone_raw))[-10:]
-                
-                all_leads.append({
-                    "GMB Rank": rank,
-                    "Business Name": item.get('title', 'Unknown'),
-                    "Rating ⭐": item.get('rating', 'N/A'),
-                    "Reviews 💬": item.get('reviews', 0),
-                    "Phone": clean_phone,
-                    "Email": extract_email(str(item)),
-                    "Website": item.get('website') or item.get('link', 'Not Available'),
-                    "Address": item.get('address', 'View on Maps'),
-                    "PIN Code": pin,
-                    "WhatsApp": f"https://wa.me/91{clean_phone}"
-                })
-        
-        progress_bar.progress((idx + 1) / len(pins))
-        time.sleep(1)
-
-    if all_leads:
-        df = pd.DataFrame(all_leads).drop_duplicates(subset=['Phone'])
-        
-        # --- 3. SALES METRICS ---
-        st.success(f"✅ Extracted {len(df)} High-Quality Leads!")
-        
-        m1, m2, m3 = st.columns(3)
-        no_web = len(df[df['Website'] == "Not Available"])
-        low_rated = len(df[(df['Rating ⭐'] != 'N/A') & (df['Rating ⭐'] < 4.0)])
-        
-        m1.metric("Total Leads", len(df))
-        m2.metric("No Website (Web Sales)", no_web)
-        m3.metric("Low Rated (SEO Sales)", low_rated)
-
-        st.divider()
-        
-        # Professional Data Table
-        st.dataframe(
-            df, 
-            column_config={
-                "WhatsApp": st.column_config.LinkColumn("Chat"),
-                "Website": st.column_config.LinkColumn("Website"),
-            },
-            use_container_width=True,
-            hide_index=True
-        )
-        
-        # CSV Download
-        st.download_button(
-            "📥 Download Precious Database (CSV)", 
-            df.to_csv(index=False).encode('utf-8'), 
-            f"precious_{industry}.csv", 
-            "text/csv",
-            key="dl_btn"
-        )
-    else:
-        st.error("❌ No results found. Try switching to 'Google Maps' or checking your PIN codes.")
+    # (Your existing Lead Sniper code goes here)
+    if st.button("🚀 Start Sniper Scan"):
+        # After successful search:
+        st.session_state.user_credits -= 1
+        update_credits(st.session_state.user_email, st.session_state.user_credits)
+        st.sidebar.write("✅ 1 Credit Deducted")
