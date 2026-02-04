@@ -2,44 +2,59 @@ import streamlit as st
 import pandas as pd
 from pypinindia import PincodeData
 
-# Load the database
 pin_finder = PincodeData()
 
 st.title("📝 Precision Prompt Generator")
 
-with st.sidebar:
-    st.header("⚙️ Admin")
-    # Unique key for this page
-    st.text_input("API Key", value="7ab11ec8...", type="password", key="api_gen")
+# 1. LOAD & CLEAN THE DATA (The "Cleaner" Logic)
+@st.cache_data
+def get_clean_data():
+    df = pd.DataFrame(pin_finder.data)
+    # Convert everything to Proper Case to fix "salem" vs "SALEM"
+    df['districtname'] = df['districtname'].str.title()
+    df['taluk'] = df['taluk'].str.title()
+    df['statename'] = df['statename'].str.title()
+    return df
 
-# 1. Selection UI
+all_data = get_clean_data()
+
+# 2. SELECTION UI
 col1, col2 = st.columns(2)
+
 with col1:
-    state_list = pin_finder.get_states()
-    state = st.selectbox("State", state_list, index=state_list.index("TAMIL NADU") if "TAMIL NADU" in state_list else 0)
-    district = st.selectbox("District", pin_finder.get_districts(state_name=state))
+    states = sorted(all_data['statename'].unique())
+    state = st.selectbox("Select State", states, index=states.index("Tamil Nadu") if "Tamil Nadu" in states else 0)
+    
+    districts = sorted(all_data[all_data['statename'] == state]['districtname'].unique())
+    district = st.selectbox("Select District", districts)
 
 with col2:
-    all_data = pd.DataFrame(pin_finder.data)
-    mask = (all_data['districtname'].str.upper() == district.upper())
-    taluks = all_data[mask]['taluk'].unique()
-    sub_district = st.selectbox("Sub-District (Taluk)", ["All Taluks"] + list(taluks))
+    # Get Taluks ONLY for the selected district to remove "Salem/Erode" from Namakkal
+    mask = (all_data['districtname'] == district)
+    taluks = sorted(all_data[mask]['taluk'].unique())
+    
+    sub_district = st.selectbox("Select Sub-District (Taluk)", ["All Taluks"] + taluks)
 
-# 2. Industry input
-industry = st.text_input("Business Category (e.g., Hotels, Dentist)", "Hotels", key="ind_gen")
+# 3. INDUSTRY & GENERATE
+st.divider()
+industry = st.text_input("Business Category", "Hotels", key="ind_gen")
 
 if st.button("💎 Send to Sniper", use_container_width=True):
+    # Filter for the specific PINs
     if sub_district == "All Taluks":
-        results = pin_finder.search_by_district(district, state)
+        final_pins = all_data[all_data['districtname'] == district]['pincode'].unique()
     else:
-        results = all_data[mask & (all_data['taluk'].str.upper() == sub_district.upper())]['pincode'].unique().tolist()
+        final_pins = all_data[(all_data['districtname'] == district) & 
+                              (all_data['taluk'] == sub_district)]['pincode'].unique()
     
-    if results:
-        pin_string = ", ".join([str(p) for p in results])
+    if len(final_pins) > 0:
+        pin_string = ", ".join([str(p) for p in final_pins])
         
-        # --- THE SYNC LOGIC ---
+        # Sync to the Sniper
         st.session_state['sniping_pincodes'] = pin_string
         st.session_state['sniping_category'] = industry 
         
-        st.success(f"✅ Sent {len(results)} PINs for {industry} to the Sniper!")
-        st.info("🎯 Now switch to 'Lead Sniper' in the sidebar.")
+        st.success(f"✅ Found {len(final_pins)} PINs for {sub_district} in {district}!")
+        st.info("🎯 switch to 'Lead Sniper' tab now.")
+    else:
+        st.error("No PIN codes found. Try selecting 'All Taluks'.")
