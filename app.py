@@ -80,3 +80,4 @@ elif choice == "Admin Panel":
         st.write("Manage credits and users here.")
     else:
         st.error("🚫 Access Denied. Admins only.")
+
