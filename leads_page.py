@@ -107,3 +107,17 @@ if start_btn:
         st.download_button("📥 Download Database", df.to_csv(index=False).encode('utf-8'), "pin_leads.csv", "text/csv")
     else:
         st.error("No results found. Check your PIN codes or API key.")
+
+# ... (Top of your file stays the same) ...
+
+with st.sidebar:
+    st.header("⚙️ Configuration")
+    api_key_input = st.text_input("API Key", value="7ab11ec8c0050913c11a96062dc1e295af9743f0", type="password")
+    
+    industry = st.text_input("Business Type", "Dentist")
+    
+    # DYNAMIC INPUT: Get pins from the Generator if they exist
+    ready_pins = st.session_state.get('sniping_pincodes', "636001, 636007")
+    pin_input = st.text_area("Enter PIN Codes (comma separated)", value=ready_pins)
+    
+    # ... (Rest of your scan logic) ...
