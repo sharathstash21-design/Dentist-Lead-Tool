@@ -21,7 +21,7 @@ def fetch_precious_data(query, api_key, page_num=0, location_lock=None):
     url = "https://www.searchapi.io/api/v1/search"
     offset = page_num * 20 
     
-    # FORCING GOOGLE MAPS ENGINE ONLY
+    # FORCING GOOGLE MAPS ENGINE
     params = {
         "engine": "google_maps",
         "q": query,
@@ -36,6 +36,7 @@ def fetch_precious_data(query, api_key, page_num=0, location_lock=None):
     try:
         response = requests.get(url, params=params, timeout=20)
         data = response.json()
+        # Returns 'places' from Google Maps Engine
         return data.get('places', [])
     except: return []
 
@@ -52,25 +53,24 @@ with st.sidebar:
     industry = st.text_input("Business Category", value="Hospital")
 
     if method == "PIN Code Mode":
-        pin_input = st.text_area("Target PIN Codes", value="636001")
+        pin_input = st.text_area("Target PIN Codes", value="637001")
         pages_to_scan = st.number_input("Pages per PIN", 1, 5, 1)
         targets = [p.strip() for p in pin_input.replace("\n", ",").split(",") if p.strip()]
         total_cost = len(targets) * pages_to_scan
     else:
-        # CITY MODE - Strict Location Lock
         st.subheader("📍 Target Area")
         city = st.text_input("District / City", value="Namakkal")
         state = st.text_input("State", value="Tamil Nadu")
         full_loc = f"{city}, {state}, India"
         pages_to_scan = st.number_input("Total Pages", 1, 5, 1)
-        total_cost = 2 * pages_to_scan # URL/City mode scan is 2 credits per page
+        total_cost = 2 * pages_to_scan
         targets = [city]
 
     st.divider()
     if len(targets) > 0:
         st.info(f"📊 **Cost:** {total_cost} Credits")
         if st.session_state.user_credits < total_cost:
-            st.error(f"⚠️ Need {total_cost} credits. You have {st.session_state.user_credits}.")
+            st.error(f"⚠️ Need {total_cost} credits. Have {st.session_state.user_credits}.")
             start_btn = st.button("🚀 Start Sniper", disabled=True)
         else:
             start_btn = st.button("🚀 Start Sniper", use_container_width=True)
@@ -83,9 +83,10 @@ if start_btn:
         all_temp_leads = []
         
         for t in targets:
-            # We create a specific lock for every scan
-            lock_query = f"{t}, Tamil Nadu, India" if method == "PIN Code Mode" else full_loc
-            search_query = f"{industry} in {t}"
+            # We use a broader lock query for the API
+            lock_query = f"{t}, {state}, India" if method == "PIN Code Mode" else full_loc
+            # We add the city name directly to the search query for double safety
+            search_query = f"{industry} in {t}, {state}"
             
             for page in range(pages_to_scan):
                 status.write(f"🛰️ Scanning {t} | Page {page+1}...")
@@ -95,11 +96,9 @@ if start_btn:
                     addr = item.get('address', '')
                     phone = item.get('phone') or item.get('phone_number')
                     
-                    # --- SMART LOCATION FILTER ---
-                    # Checks for City Name, PIN, or TN shortcuts to be flexible but accurate
-                    match_found = any(x.lower() in addr.lower() for x in [t, "Tamil Nadu", "TN"])
-                    
-                    if phone and match_found:
+                    # --- FLEXIBLE LOCATION FILTER ---
+                    # We accept it if it has a phone, even if address formatting is weird
+                    if phone:
                         gps = item.get('gps_coordinates', {})
                         all_temp_leads.append({
                             "Name": item.get('title', 'Unknown'),
@@ -117,32 +116,21 @@ if start_btn:
             df_final = pd.DataFrame(all_temp_leads).drop_duplicates(subset=['Phone'])
             st.session_state['last_extracted_leads'] = df_final
             
-            # Sync Credits to Sheet
-            status.write("💳 Finalizing Payment...")
             deduct_remote_credit(st.session_state.user_email, total_cost)
             st.session_state.user_credits -= total_cost
             
-            status.update(label=f"🎯 Success! {len(df_final)} local leads found.", state="complete")
+            status.update(label=f"🎯 Success! {len(df_final)} leads found.", state="complete")
         else:
-            status.update(label="❌ No local leads found.", state="error")
-            st.warning("Check if the area name or business category is correct.")
+            status.update(label="❌ No leads found.", state="error")
+            st.warning("Check your SearchAPI key balance or try a different category.")
 
 # --- 4. DISPLAY ---
 if 'last_extracted_leads' in st.session_state:
     df = st.session_state['last_extracted_leads']
     st.success(f"✅ {len(df)} Leads Ready!")
 
-    # Table View
-    st.dataframe(
-        df.drop(columns=['lat', 'lng']), 
-        use_container_width=True,
-        column_config={
-            "WhatsApp": st.column_config.LinkColumn("Chat"),
-            "Website": st.column_config.LinkColumn("Visit")
-        }
-    )
+    st.dataframe(df.drop(columns=['lat', 'lng']), use_container_width=True)
 
-    # Visual Map
     valid_map = df.dropna(subset=['lat', 'lng'])
     if not valid_map.empty:
         m = folium.Map(location=[valid_map.iloc[0]['lat'], valid_map.iloc[0]['lng']], zoom_start=12)
@@ -150,6 +138,4 @@ if 'last_extracted_leads' in st.session_state:
             folium.Marker([row['lat'], row['lng']], popup=row['Name']).add_to(m)
         st_folium(m, width=700, height=400)
 
-    # Download
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Download Excel/CSV", csv, "nuera_leads.csv", "text/csv")
+    st.download_button("📥 Download", df.to_csv(index=False).encode('utf-8'), "nuera_leads.csv")
