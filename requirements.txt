@@ -5,3 +5,5 @@ pypinindia
 streamlit-folium
 folium
 geopy
+gspread
+google-auth
