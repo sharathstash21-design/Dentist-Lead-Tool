@@ -1,120 +1,112 @@
+import os
+os.environ["OPENBLAS_NUM_THREADS"] = "1" 
+
 import streamlit as st
 import pandas as pd
+import re
 import requests
 import json
-import re
 import time
 
-# --- 1. THE DATA HUNTER ---
-
+# --- THE HUNTER ---
 def extract_email(text):
-    """Regex to catch emails in snippets."""
     match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
     return match.group(0) if match else "Not Found"
 
-def fetch_massive_leads(industry, city, api_key, target_num, source):
+def fetch_and_process_pro(query, api_key, target_source, target_num):
     all_leads = []
-    is_maps = (source == "Google Maps")
+    is_maps = (target_source == "Google Maps")
     search_type = "maps" if is_maps else "search"
     
+    pages_to_run = (target_num // 20) if target_num > 20 else 1
     prog_bar = st.progress(0)
-    status = st.empty()
+    status_msg = st.empty()
     
-    # Each page gives 20 results. 100 leads = 5 pages.
-    pages_to_scan = (target_num // 20) if target_num > 20 else 1
-    
-    for page_idx in range(pages_to_scan):
-        current_page = page_idx + 1
-        status.info(f"🔍 **Scanning Page {current_page} of {pages_to_scan}... (Leads found: {len(all_leads)})**")
+    for page in range(pages_to_run):
+        current_page = page + 1
+        status_msg.info(f"🔍 **Scanning Page {current_page} of {pages_to_run}... (Total: {len(all_leads)})**")
         
         url = f"https://google.serper.dev/{search_type}"
-        # CRITICAL: We must send the 'page' number to get new results
-        payload = json.dumps({
-            "q": f"{industry} in {city}" if is_maps else f'site:{source.lower()}.com "{industry}" "{city}" "+91"',
-            "num": 20,
-            "page": current_page 
-        })
+        payload = json.dumps({"q": query, "num": 20, "page": current_page})
         headers = {'X-API-KEY': api_key, 'Content-Type': 'application/json'}
-
+        
         try:
             response = requests.post(url, headers=headers, data=payload, timeout=20)
             data = response.json()
-            
-            # Pick the right data list based on source
             items = data.get('places' if is_maps else 'organic', [])
             
             if not items:
-                status.warning(f"⚠️ No more data on Page {current_page}. Finishing...")
-                break
-
-            for item in items:
-                snippet = item.get('snippet', '') if not is_maps else item.get('address', '')
+                continue # Try next page if this is empty
                 
-                # Enhanced Email Hunter
-                email = extract_email(snippet)
-                if email == "Not Found" and not is_maps:
-                    # Look in the title too
-                    email = extract_email(item.get('title', ''))
-
+            for index, item in enumerate(items):
+                snippet = item.get('snippet', '') if not is_maps else item.get('address', '')
+                title = item.get('title', 'Unknown')
                 phone_raw = item.get('phoneNumber') if is_maps else re.search(r'[6-9]\d{9}', snippet)
+                
+                # Capture Rank and Website
+                rank = index + 1 + (page * 20)
+                website = item.get('website', 'Not Found') if is_maps else item.get('link', 'Not Found')
                 
                 if phone_raw:
                     phone = phone_raw if is_maps else phone_raw.group()
                     clean_phone = re.sub(r'\D', '', str(phone))[-10:]
-                    
                     all_leads.append({
-                        "Business Name": item.get('title', 'Unknown'),
+                        "Rank": rank,
+                        "Business Name": title,
                         "Phone": clean_phone,
-                        "Email": email,
-                        "Website": item.get('website') if is_maps else item.get('link'),
-                        "Source": source,
+                        "Email": extract_email(snippet),
+                        "Website": website,
+                        "Location": query.split("in")[-1].strip(),
                         "WhatsApp": f"https://wa.me/91{clean_phone}"
                     })
             
-            # Update UI
-            prog_bar.progress(current_page / pages_to_scan)
-            time.sleep(2) # Delay to prevent API rate limiting
+            prog_bar.progress(current_page / pages_to_run)
+            time.sleep(1.5)
             
-        except Exception as e:
-            st.error(f"Error on Page {current_page}: {e}")
+        except:
             break
-
+            
     return all_leads
 
-# --- 2. THE UI ---
+# --- THE UI ---
+st.set_page_config(page_title="Nuera Global Lead Pro", layout="wide")
 
-st.set_page_config(page_title="Nuera Deep-Scan", layout="wide")
-st.title("🚀 Nuera Deep-Scan Lead Scraber")
+# (Login logic remains the same...)
+
+st.title("🌍 Nuera Global Lead Scraber")
 
 with st.sidebar:
-    st.header("Settings")
-    api_key = st.text_input("Serper API Key", value="7ab11ec8c0050913c11a96062dc1e295af9743f0", type="password")
+    st.header("📍 Location Filters")
+    country = st.selectbox("Country", ["India", "USA", "UK", "UAE"])
+    state = st.text_input("State", "Tamil Nadu")
+    district = st.text_input("District/City", "Salem")
+    
+    st.divider()
     industry = st.text_input("Industry", "Dentist")
-    city = st.text_input("City", "Salem")
-    source = st.selectbox("Source", ["Google Maps", "JustDial", "Facebook", "LinkedIn"])
+    target = st.selectbox("Source", ["Google Maps", "JustDial", "LinkedIn", "Facebook"])
     depth = st.select_slider("Lead Target", options=[20, 40, 60, 80, 100], value=40)
-    run = st.button("🔥 Start Deep Extraction")
+    
+    start_scan = st.button("🔥 Run Global Scan")
 
-if run:
-    results = fetch_massive_leads(industry, city, api_key, depth, source)
+if start_scan:
+    # BUILD POWERFUL QUERY
+    full_location = f"{district}, {state}, {country}"
+    
+    if target == "Google Maps":
+        search_query = f"{industry} in {full_location}"
+    else:
+        domains = {"JustDial": "justdial.com", "LinkedIn": "linkedin.com", "Facebook": "facebook.com"}
+        search_query = f'site:{domains[target]} "{industry}" "{full_location}" "+91"'
+            
+    results = fetch_and_process_pro(search_query, api_key, target, depth)
     
     if results:
-        df = pd.DataFrame(results).drop_duplicates(subset=['Phone'])
+        final_df = pd.DataFrame(results).drop_duplicates(subset=['Phone'])
         
-        # Metric Dashboard
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Leads Found", len(df))
-        c2.metric("Target City", city)
-        c3.metric("Emails Found", len(df[df['Email'] != "Not Found"]))
-        
-        st.dataframe(
-            df, 
-            column_config={
-                "WhatsApp": st.column_config.LinkColumn("Message"),
-                "Website": st.column_config.LinkColumn("Visit")
-            },
-            use_container_width=True
-        )
-        
-        st.download_button("📥 Download Full CSV", df.to_csv(index=False).encode('utf-8'), "leads.csv", "text/csv")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Leads Found", len(final_df))
+        m2.metric("Target", full_location)
+        m3.metric("Emails Found", len(final_df[final_df['Email'] != "Not Found"]))
 
+        st.dataframe(final_df, use_container_width=True)
+        st.download_button("📥 Export CSV", final_df.to_csv(index=False).encode('utf-8'), f"{district}_leads.csv", "text/csv")
