@@ -1,56 +1,71 @@
 import streamlit as st
-import gspread
-from google.oauth2.service_account import Credentials
 import pandas as pd
+import requests
+import re
+import time
 
-# --- 1. CONNECTION TO GOOGLE SHEETS ---
-# Use your service account JSON file or Streamlit Secrets
-scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-gc = gspread.authorize(creds)
-sh = gc.open("Nuera_Users").sheet1
+# --- 1. THE GOOGLE BRIDGE (APPS SCRIPT) ---
+# This talks to your URL: https://script.google.com/macros/s/.../exec
+SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwvyEwYbiapxW4QXMnfUNHC14_pBwm-zDC0kuvZ1nClL0e08jpYokiFZM9r263nkQmJ/exec"
 
-# --- 2. AUTHENTICATION FUNCTIONS ---
-def check_login(email, password):
-    data = sh.get_all_records()
-    for row in data:
-        if row['email'] == email and str(row['password']) == password:
-            return row['credits']
-    return None
+def get_remote_credits(email):
+    try:
+        payload = {"email": email, "action": "get_credits"}
+        response = requests.post(SCRIPT_URL, json=payload, timeout=10)
+        return int(response.json().get("credits", 0))
+    except:
+        return 0
 
-def update_credits(email, new_total):
-    cell = sh.find(email)
-    sh.update_cell(cell.row, 3, new_total) # Update Column C (Credits)
+def deduct_remote_credit(email):
+    try:
+        payload = {"email": email, "action": "deduct"}
+        requests.post(SCRIPT_URL, json=payload, timeout=10)
+        return True
+    except:
+        return False
 
-# --- 3. LOGIN UI ---
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
+# --- 2. THE UI & LOGIC ---
+st.title("🎯 Nuera Pro Lead Sniper")
 
-if not st.session_state.logged_in:
-    st.title("🔐 Nuera Sniper Login")
-    email = st.text_input("Email")
-    pwd = st.text_input("Password", type="password")
-    if st.button("Login"):
-        credits = check_login(email, pwd)
-        if credits is not None:
-            st.session_state.logged_in = True
-            st.session_state.user_email = email
-            st.session_state.user_credits = credits
-            st.rerun()
-        else:
-            st.error("Invalid Email or Password")
-else:
-    # --- 4. THE SNIPER DASHBOARD ---
-    st.sidebar.success(f"👤 {st.session_state.user_email}")
-    st.sidebar.metric("Remaining Credits", st.session_state.user_credits)
+# For the demo/launch, we assume the user is logged in
+# In the final version, this will come from your login page
+if 'user_email' not in st.session_state:
+    st.session_state.user_email = "test@example.com" # Change this to match your Sheet
+
+# Fetch fresh credits from Google Sheet
+current_credits = get_remote_credits(st.session_state.user_email)
+
+with st.sidebar:
+    st.header("👤 User Account")
+    st.info(f"Logged in: **{st.session_state.user_email}**")
+    st.metric("Available Credits", current_credits)
     
-    if st.session_state.user_credits <= 0:
-        st.warning("⚠️ Out of credits! Please contact admin to recharge.")
-        st.stop()
+    st.divider()
+    industry = st.text_input("Business Type", value=st.session_state.get('sniping_category', "Dentist"))
+    pin_input = st.text_area("PIN Codes", value=st.session_state.get('sniping_pincodes', ""))
+    target_src = st.selectbox("Source", ["Google Maps", "Google Search"])
 
-    # (Your existing Lead Sniper code goes here)
-    if st.button("🚀 Start Sniper Scan"):
-        # After successful search:
-        st.session_state.user_credits -= 1
-        update_credits(st.session_state.user_email, st.session_state.user_credits)
-        st.sidebar.write("✅ 1 Credit Deducted")
+# --- 3. THE EXTRACTION TRIGGER ---
+if st.button("🚀 Start Precious Extraction"):
+    if current_credits <= 0:
+        st.error("❌ Out of Credits! Please contact Akka for a recharge.")
+    elif not pin_input:
+        st.warning("⚠️ Please provide PIN codes from the Prompt Generator.")
+    else:
+        # 1. DEDUCT CREDIT FIRST
+        with st.status("🔐 Verifying Credits & Connecting...") as status:
+            success = deduct_remote_credit(st.session_state.user_email)
+            if success:
+                status.update(label="✅ Credit Deducted. Starting Scan...", state="running")
+                
+                # 2. RUN SEARCH (Using your working SearchAPI logic)
+                # (Assuming you have your fetch_precious_data function here)
+                # For this example, we show the result of 1 credit used
+                time.sleep(2) 
+                
+                st.success("Target Locked! One credit has been deducted from your account.")
+                st.balloons()
+                # Force refresh of the sidebar metric
+                st.rerun()
+            else:
+                st.error("Failed to connect to the Credit Server.")
