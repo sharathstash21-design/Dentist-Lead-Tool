@@ -3,4 +3,5 @@ pandas
 requests
 pypinindia
 streamlit-folium
+folium
 geopy
