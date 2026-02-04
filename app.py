@@ -1,5 +1,4 @@
 import os
-# Final fix for the Windows memory crash issue
 os.environ["OPENBLAS_NUM_THREADS"] = "1" 
 
 import streamlit as st
@@ -8,157 +7,119 @@ import re
 import requests
 import json
 
-# --- 1. CORE SCRAPING BRAIN ---
+# --- PRO LOGIC: PAGING & EMAIL HUNTER ---
 
 def extract_email(text):
-    """Hunter for finding emails in search snippets."""
     match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
     return match.group(0) if match else "Not Found"
 
-def fetch_data(query, api_key, search_type="search", num_results=20):
-    """Talks to Serper API to get clean data."""
+def fetch_pro_data(query, api_key, search_type="search", num=20):
     url = f"https://google.serper.dev/{search_type}"
-    payload = json.dumps({"q": query, "num": num_results})
+    # We use 'num' to get more data per request
+    payload = json.dumps({"q": query, "num": num})
     headers = {'X-API-KEY': api_key, 'Content-Type': 'application/json'}
-    
     try:
         response = requests.post(url, headers=headers, data=payload, timeout=20)
         return response.json()
-    except Exception:
+    except:
         return {}
 
-def parse_leads(data, source_label, mode="organic"):
-    """Turns raw JSON into a clean lead list."""
+def process_results(data, source_name, is_maps=False):
     leads = []
-    
-    if mode == "organic":
-        for result in data.get('organic', []):
-            snippet = result.get('snippet', '')
-            # Regex for Indian Mobile Numbers (6-9 followed by 9 digits)
-            phone = re.search(r'[6-9]\d{9}', snippet)
-            email = extract_email(snippet)
-            
-            if phone:
-                leads.append({
-                    "Business Name": result.get('title', 'Unknown'),
-                    "Phone": phone.group(),
-                    "Email": email,
-                    "Source": source_label,
-                    "Action": f"https://wa.me/91{phone.group()}"
-                })
-    
-    elif mode == "maps":
-        for result in data.get('places', []):
-            phone = result.get('phoneNumber')
-            if phone:
-                # Clean the phone number string
-                clean_phone = re.sub(r'\D', '', phone)[-10:]
-                leads.append({
-                    "Business Name": result.get('title'),
-                    "Phone": clean_phone,
-                    "Email": "Check Website", # Maps API rarely shows email directly
-                    "Source": "Google Maps",
-                    "Action": f"https://wa.me/91{clean_phone}"
-                })
+    items = data.get('places' if is_maps else 'organic', [])
+    for item in items:
+        snippet = item.get('snippet', '') if not is_maps else item.get('address', '')
+        title = item.get('title', 'Unknown')
+        phone_raw = item.get('phoneNumber') if is_maps else re.search(r'[6-9]\d{9}', snippet)
+        
+        if phone_raw:
+            phone = phone_raw if is_maps else phone_raw.group()
+            clean_phone = re.sub(r'\D', '', phone)[-10:]
+            leads.append({
+                "Business Name": title,
+                "Phone": clean_phone,
+                "Email": extract_email(snippet),
+                "Source": source_name,
+                "Action": f"https://wa.me/91{clean_phone}"
+            })
     return leads
 
-# --- 2. USER INTERFACE (DASHBOARD) ---
+# --- UI DESIGN: PROFESSIONAL DASHBOARD ---
 
-st.set_page_config(page_title="Nuera Lead Scraber Pro", layout="wide", page_icon="🚀")
+st.set_page_config(page_title="Nuera Lead Pro", layout="wide", page_icon="📈")
 
-# Simple Login Logic
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
+# 1. CLEAN LOGIN
+if "auth" not in st.session_state:
+    st.session_state.auth = False
 
-if not st.session_state.authenticated:
-    st.title("🔐 Nuera SaaS Login")
-    pass_input = st.text_input("Enter Access Code", type="password")
-    if st.button("Unlock Dashboard"):
-        if pass_input == "Salem123": # You can change this password anytime
-            st.session_state.authenticated = True
-            st.rerun()
-        else:
-            st.error("Incorrect code. Please contact admin.")
+if not st.session_state.auth:
+    st.title("🔐 Client Access Portal")
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        code = st.text_input("Enter License Key", type="password")
+        if st.button("Access Software"):
+            if code == "Salem123":
+                st.session_state.auth = True
+                st.rerun()
+            else:
+                st.error("Invalid Key")
     st.stop()
 
-# Main App Header
+# 2. MAIN DASHBOARD
 st.title("🚀 Nuera Lead Scraber Pro")
-st.subheader("Extract B2B Leads from Google Maps, Social Media & JustDial")
+st.markdown("### *Premium Business Intelligence & Lead Extraction*")
 
-# Sidebar Configuration
+# Sidebar for professional organization
 with st.sidebar:
-    st.header("⚙️ API Configuration")
-    api_key = st.text_input("Serper API Key", value="7ab11ec8c0050913c11a96062dc1e295af9743f0", type="password")
+    st.image("https://cdn-icons-png.flaticon.com/512/1055/1055644.png", width=100)
+    st.header("Admin Settings")
+    api_key = st.text_input("API Key", value="7ab11ec8c0050913c11a96062dc1e295af9743f0", type="password")
     
     st.divider()
-    st.header("🔍 Search Parameters")
-    industry = st.text_input("Business Category", "Dentist")
-    city = st.text_input("Location/City", "Salem")
+    st.header("Search Filters")
+    industry = st.text_input("Target Industry", "Dentist")
+    city = st.text_input("Target City", "Salem")
     
-    st.divider()
-    target_source = st.selectbox(
-        "Target Platform",
-        ["Google Maps", "Facebook", "Instagram", "LinkedIn", "JustDial", "Multi-Social Scan"]
-    )
+    target = st.selectbox("Data Source", ["Google Maps", "JustDial", "LinkedIn", "Facebook", "Instagram"])
+    depth = st.select_slider("Extraction Depth", options=[10, 20, 50, 100], value=20)
     
-    limit = st.slider("Target Lead Count", 10, 100, 40)
-    
-    run_btn = st.button("🚀 Start Extraction", use_container_width=True)
+    start_scan = st.button("🔥 Start Deep Extraction", use_container_width=True)
 
-# --- 3. EXECUTION LOGIC ---
+# 3. RESULTS AREA
+if start_scan:
+    with st.spinner("Analyzing Search Results..."):
+        # Source Mapping
+        source_map = {"JustDial": "justdial.com", "LinkedIn": "linkedin.com", "Facebook": "facebook.com", "Instagram": "instagram.com"}
+        
+        if target == "Google Maps":
+            raw = fetch_pro_data(f"{industry} in {city}", api_key, "maps", depth)
+            final_df = pd.DataFrame(process_results(raw, "Maps", True))
+        else:
+            domain = source_map[target]
+            q = f'site:{domain} "{industry}" "{city}" "+91"'
+            raw = fetch_pro_data(q, api_key, "search", depth)
+            final_df = pd.DataFrame(process_results(raw, target, False))
 
-if run_btn:
-    if not api_key:
-        st.error("API Key is missing!")
-    else:
-        with st.spinner(f"Scraping {industry} leads in {city}..."):
-            final_leads = []
+        if not final_df.empty:
+            final_df = final_df.drop_duplicates(subset=['Phone'])
             
-            if target_source == "Google Maps":
-                raw = fetch_data(f"{industry} in {city}", api_key, "maps", limit)
-                final_leads = parse_leads(raw, "Maps", "maps")
-            
-            elif target_source == "Multi-Social Scan":
-                for site in ["facebook.com", "instagram.com", "linkedin.com"]:
-                    q = f'site:{site} "{industry}" "{city}" "+91"'
-                    raw = fetch_data(q, api_key, "search", limit//3)
-                    final_leads += parse_leads(raw, site.split('.')[0].capitalize(), "organic")
-            
-            else:
-                # Custom site search (JustDial, LinkedIn, etc.)
-                site_map = {
-                    "JustDial": "justdial.com",
-                    "LinkedIn": "linkedin.com",
-                    "Facebook": "facebook.com",
-                    "Instagram": "instagram.com"
-                }
-                domain = site_map[target_source]
-                q = f'site:{domain} "{industry}" "{city}" "+91"'
-                raw = fetch_data(q, api_key, "search", limit)
-                final_leads = parse_leads(raw, target_source, "organic")
+            # KPI METRIC CARDS
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Leads Found", len(final_df))
+            m2.metric("Verified Phones", len(final_df[final_df['Phone'].str.len() == 10]))
+            m3.metric("Emails Captured", len(final_df[final_df['Email'] != "Not Found"]))
 
-            # --- DISPLAY RESULTS ---
-            if final_leads:
-                df = pd.DataFrame(final_leads).drop_duplicates(subset=['Phone'])
-                
-                # Show Stats
-                col1, col2 = st.columns(2)
-                col1.metric("Total Leads Found", len(df))
-                col2.metric("Emails Captured", len(df[df['Email'] != "Not Found"]))
-                
-                st.dataframe(
-                    df, 
-                    column_config={"Action": st.column_config.LinkColumn("WhatsApp")},
-                    use_container_width=True
-                )
-                
-                # Download Option
-                csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="📥 Download Lead Database (CSV)",
-                    data=csv,
-                    file_name=f"{industry}_{city}_leads.csv",
-                    mime="text/csv"
-                )
-            else:
-                st.warning("No leads found. Try broadening your keywords or check your API credits.")
+            st.divider()
+            
+            # DATA TABLE
+            st.dataframe(
+                final_df,
+                column_config={"Action": st.column_config.LinkColumn("WhatsApp Link")},
+                use_container_width=True
+            )
+            
+            # DOWNLOAD
+            csv = final_df.to_csv(index=False).encode('utf-8')
+            st.download_button("📥 Export Lead Database (CSV)", csv, f"{city}_leads.csv", "text/csv")
+        else:
+            st.error("No results found. Please check your API credits or try a broader search.")
