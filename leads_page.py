@@ -10,33 +10,27 @@ from streamlit_folium import st_folium
 # --- 1. BRIDGE CONFIG ---
 BRIDGE_URL = "https://script.google.com/macros/s/AKfycbwvyEwYbiapxW4QXMnfUNHC14_pBwm-zDC0kuvZ1nClL0e08jpYokiFZM9r263nkQmJ/exec"
 
-def deduct_remote_credit(email):
+def deduct_remote_credit(email, amount=1):
     try:
-        requests.post(BRIDGE_URL, json={"email": email, "action": "deduct"}, timeout=10)
+        # Deduct multiple credits if scanning multiple pages/PINs
+        for _ in range(amount):
+            requests.post(BRIDGE_URL, json={"email": email, "action": "deduct"}, timeout=10)
         return True
     except: return False
 
-def fetch_precious_data(query, pin, api_key, target_source, search_url=None):
+def fetch_precious_data(query, pin, api_key, page_num=0):
     url = "https://www.searchapi.io/api/v1/search"
+    # Logic: Start at 0, then 20, then 40 for next pages
+    offset = page_num * 20 
     
-    # If URL Mode is used, we send the URL directly to the API
-    if search_url:
-        params = {
-            "engine": "google_maps",
-            "google_domain": "google.co.in",
-            "q": query, # The API uses the query to refine URL results
-            "api_key": api_key
-        }
-    else:
-        # Standard PIN Mode
-        is_maps = (target_source == "Google Maps")
-        params = {
-            "engine": "google_maps" if is_maps else "google",
-            "q": f"{query} {pin} India",
-            "api_key": api_key,
-            "gl": "in"
-        }
-        
+    params = {
+        "engine": "google_maps",
+        "q": f"{query} {pin} India",
+        "api_key": api_key,
+        "gl": "in",
+        "hl": "en",
+        "start": offset # This tells Google to go to the NEXT PAGE
+    }
     try:
         response = requests.get(url, params=params, timeout=20)
         data = response.json()
@@ -44,95 +38,83 @@ def fetch_precious_data(query, pin, api_key, target_source, search_url=None):
     except: return []
 
 # --- 2. THE UI & SIDEBAR ---
-st.title("🎯 Nuera Dual-Engine Sniper")
+st.title("🎯 Nuera Multi-Page Lead Sniper")
 
 with st.sidebar:
-    st.header("⚙️ Sniper Configuration")
+    st.header("⚙️ Sniper Settings")
     api_key_val = st.text_input("SearchAPI Key", value="E7PCYwNsJvWgmyGkqDcMdfYN", type="password")
+    industry = st.text_input("Business Type", value=st.session_state.get('sniping_category', "Hospital"))
+    pin_input = st.text_area("Target PIN Codes", value=st.session_state.get('sniping_pincodes', ""))
     
-    # --- NEW: CHOOSE YOUR ATTACK METHOD ---
-    method = st.radio("Select Extraction Method", ["PIN Code Mode", "Google URL Mode"])
-    st.divider()
-
-    industry = st.text_input("Business Category", value=st.session_state.get('sniping_category', "Hospital"))
-
-    if method == "PIN Code Mode":
-        pin_input = st.text_area("Target PIN Codes", value=st.session_state.get('sniping_pincodes', ""))
-        target_src = st.selectbox("Search Source", ["Google Maps", "Google Search"])
-        pins_list = [p.strip() for p in pin_input.replace("\n", ",").split(",") if p.strip()]
-        cost = len(pins_list)
-    else:
-        target_url = st.text_area("Paste Google Search URL", placeholder="Paste the long Google Maps link here...")
-        st.info("URL Mode costs 2 credits per deep scan.")
-        cost = 2
+    # --- NEXT PAGE CONTROL ---
+    pages_to_scan = st.number_input("Pages per PIN (1 page = ~20 leads)", min_value=1, max_value=5, value=1)
+    
+    pins_list = [p.strip() for p in pin_input.replace("\n", ",").split(",") if p.strip()]
+    num_pins = len(pins_list)
+    total_cost = num_pins * pages_to_scan # Charge per page scanned
 
     st.divider()
-    # Credit Check Logic
-    if (method == "PIN Code Mode" and len(pins_list) > 0) or (method == "Google URL Mode" and target_url):
-        st.info(f"📊 **Plan:** {method}\n- Cost: {cost} Credits")
-        if st.session_state.user_credits < cost:
+    if num_pins > 0:
+        st.info(f"📊 **Plan:**\n- PINs: {num_pins}\n- Depth: {pages_to_scan} Pages\n- Cost: {total_cost} Credits")
+        if st.session_state.user_credits < total_cost:
             st.error("⚠️ Insufficient Credits!")
-            start_btn = st.button("🚀 Start Extraction", disabled=True)
+            start_btn = st.button("🚀 Start Deep Extraction", disabled=True)
         else:
-            start_btn = st.button("🚀 Start Extraction", use_container_width=True)
+            start_btn = st.button("🚀 Start Deep Extraction", use_container_width=True)
     else:
-        st.warning("Awaiting Input...")
-        start_btn = st.button("🚀 Start Extraction", disabled=True)
+        st.warning("Enter PINs first.")
+        start_btn = st.button("🚀 Start Deep Extraction", disabled=True)
 
 # --- 3. EXTRACTION ACTION ---
 if start_btn:
-    with st.status("💎 Sniping Leads...", expanded=True) as status:
-        temp_leads = []
+    with st.status("💎 Deep Sniping in Progress...", expanded=True) as status:
+        all_temp_leads = []
         
-        if method == "PIN Code Mode":
-            for pin in pins_list:
-                status.write(f"🛰️ Scanning PIN: {pin}...")
-                raw_items = fetch_precious_data(industry, pin, api_key_val, target_src)
-                for item in raw_items:
+        for pin in pins_list:
+            for page in range(pages_to_scan):
+                status.write(f"🛰️ Scanning {pin} | Page {page+1}...")
+                raw_items = fetch_precious_data(industry, pin, api_key_val, page)
+                
+                if not raw_items:
+                    status.write(f"⚠️ No more results on Page {page+1}")
+                    break # Stop if a page is empty
+                
+                for rank, item in enumerate(raw_items, 1):
                     address = item.get('address', 'N/A')
-                    phone = item.get('phone') or item.get('phone_number')
-                    if phone and (pin in address): # Strict Filter
-                        temp_leads.append(item)
-        else:
-            status.write("📡 Extracting from URL...")
-            # For URL mode, we pass the data differently
-            raw_items = fetch_precious_data(industry, None, api_key_val, None, search_url=target_url)
-            temp_leads = raw_items
+                    phone_raw = item.get('phone') or item.get('phone_number')
+                    
+                    if phone_raw and (pin in address):
+                        gps = item.get('gps_coordinates', {})
+                        all_temp_leads.append({
+                            "PIN": pin,
+                            "Name": item.get('title', 'Unknown'),
+                            "Rating": item.get('rating', 0),
+                            "Phone": re.sub(r'\D', '', str(phone_raw))[-10:],
+                            "WhatsApp": f"https://wa.me/91{re.sub(r'\D', '', str(phone_raw))[-10:]}",
+                            "Website": item.get('website', 'Not Available'),
+                            "Address": address,
+                            "lat": gps.get('latitude'),
+                            "lng": gps.get('longitude')
+                        })
+                time.sleep(1) # Small delay to be safe
 
-        if temp_leads:
-            # Format results
-            formatted_leads = []
-            for item in temp_leads:
-                phone_raw = item.get('phone') or item.get('phone_number')
-                if phone_raw:
-                    gps = item.get('gps_coordinates', {})
-                    formatted_leads.append({
-                        "Name": item.get('title', 'Unknown'),
-                        "Rating": item.get('rating', 0),
-                        "Phone": re.sub(r'\D', '', str(phone_raw))[-10:],
-                        "WhatsApp": f"https://wa.me/91{re.sub(r'\D', '', str(phone_raw))[-10:]}",
-                        "Address": item.get('address', 'N/A'),
-                        "Website": item.get('website', 'N/A'),
-                        "lat": gps.get('latitude'),
-                        "lng": gps.get('longitude')
-                    })
-            
-            df_final = pd.DataFrame(formatted_leads).drop_duplicates(subset=['Phone'])
+        if all_temp_leads:
+            df_final = pd.DataFrame(all_temp_leads).drop_duplicates(subset=['Phone'])
             st.session_state['last_extracted_leads'] = df_final
             
-            # Sync Credits
-            for _ in range(cost):
-                deduct_remote_credit(st.session_state.user_email)
-            st.session_state.user_credits -= cost
-            status.update(label=f"🎯 Success! {len(df_final)} Leads found.", state="complete")
+            # DEDUCT TOTAL COST
+            deduct_remote_credit(st.session_state.user_email, total_cost)
+            st.session_state.user_credits -= total_cost
+            status.update(label=f"🎯 Done! Found {len(df_final)} leads.", state="complete")
         else:
-            status.update(label="❌ No Leads Extracted", state="error")
+            status.update(label="❌ No matches found.", state="error")
 
-# --- 4. PERMANENT DISPLAY ---
+# --- 4. DISPLAY LOGIC ---
 if 'last_extracted_leads' in st.session_state:
     df = st.session_state['last_extracted_leads']
-    st.success(f"✅ {len(df)} Leads Ready for Business!")
+    st.success(f"✅ Total {len(df)} Leads Ready!")
 
+    # Table
     st.dataframe(
         df.drop(columns=['lat', 'lng']), 
         use_container_width=True,
@@ -141,7 +123,7 @@ if 'last_extracted_leads' in st.session_state:
             "Website": st.column_config.LinkColumn("Visit")
         }
     )
-    
+
     # Map
     valid_map = df.dropna(subset=['lat', 'lng'])
     if not valid_map.empty:
@@ -150,4 +132,4 @@ if 'last_extracted_leads' in st.session_state:
             folium.Marker([row['lat'], row['lng']], popup=row['Name']).add_to(m)
         st_folium(m, width=700, height=400)
 
-    st.download_button("📥 Download Excel/CSV", df.to_csv(index=False).encode('utf-8'), "nuera_leads.csv")
+    st.download_button("📥 Download Excel", df.to_csv(index=False).encode('utf-8'), "nuera_leads.csv")
