@@ -17,43 +17,45 @@ def fetch_massive_leads(industry, city, api_key, target_num, source):
     is_maps = (source == "Google Maps")
     search_type = "maps" if is_maps else "search"
     
-    # UI Progress
     prog_bar = st.progress(0)
     status = st.empty()
     
-    # Turn the page up to the requested depth
-    pages = (target_num // 20) if target_num > 20 else 1
+    # Each page gives 20 results. 100 leads = 5 pages.
+    pages_to_scan = (target_num // 20) if target_num > 20 else 1
     
-    for page in range(pages):
-        current_page = page + 1
-        status.info(f"🔍 **Scanning Page {current_page} of {pages}... Found {len(all_leads)} leads.**")
+    for page_idx in range(pages_to_scan):
+        current_page = page_idx + 1
+        status.info(f"🔍 **Scanning Page {current_page} of {pages_to_scan}... (Leads found: {len(all_leads)})**")
         
-        # Build query
-        if source == "Google Maps":
-            q = f"{industry} in {city}"
-        else:
-            domains = {"JustDial": "justdial.com", "LinkedIn": "linkedin.com", "Facebook": "facebook.com"}
-            q = f'site:{domains.get(source, "google.com")} "{industry}" "{city}" "+91"'
-
         url = f"https://google.serper.dev/{search_type}"
-        payload = json.dumps({"q": q, "num": 20, "page": current_page})
+        # CRITICAL: We must send the 'page' number to get new results
+        payload = json.dumps({
+            "q": f"{industry} in {city}" if is_maps else f'site:{source.lower()}.com "{industry}" "{city}" "+91"',
+            "num": 20,
+            "page": current_page 
+        })
         headers = {'X-API-KEY': api_key, 'Content-Type': 'application/json'}
 
         try:
             response = requests.post(url, headers=headers, data=payload, timeout=20)
             data = response.json()
+            
+            # Pick the right data list based on source
             items = data.get('places' if is_maps else 'organic', [])
             
             if not items:
-                # If we hit a dead end, try a broader search for the next page
-                status.warning(f"⚠️ Page {current_page} was thin. Broadening search...")
-                continue
+                status.warning(f"⚠️ No more data on Page {current_page}. Finishing...")
+                break
 
-            for idx, item in enumerate(items):
+            for item in items:
                 snippet = item.get('snippet', '') if not is_maps else item.get('address', '')
-                website = item.get('website') if is_maps else item.get('link')
                 
-                # Phone extraction
+                # Enhanced Email Hunter
+                email = extract_email(snippet)
+                if email == "Not Found" and not is_maps:
+                    # Look in the title too
+                    email = extract_email(item.get('title', ''))
+
                 phone_raw = item.get('phoneNumber') if is_maps else re.search(r'[6-9]\d{9}', snippet)
                 
                 if phone_raw:
@@ -61,23 +63,22 @@ def fetch_massive_leads(industry, city, api_key, target_num, source):
                     clean_phone = re.sub(r'\D', '', str(phone))[-10:]
                     
                     all_leads.append({
-                        "Rank": idx + 1 + (page * 20),
                         "Business Name": item.get('title', 'Unknown'),
                         "Phone": clean_phone,
-                        "Email": extract_email(snippet),
-                        "Website": website if website else "Not Found",
+                        "Email": email,
+                        "Website": item.get('website') if is_maps else item.get('link'),
                         "Source": source,
                         "WhatsApp": f"https://wa.me/91{clean_phone}"
                     })
             
-            prog_bar.progress((page + 1) / pages)
-            time.sleep(1) # Safety delay
+            # Update UI
+            prog_bar.progress(current_page / pages_to_scan)
+            time.sleep(2) # Delay to prevent API rate limiting
             
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error on Page {current_page}: {e}")
             break
 
-    status.success(f"✅ Extraction Complete! Total Unique Leads: {len(all_leads)}")
     return all_leads
 
 # --- 2. THE UI ---
@@ -116,3 +117,4 @@ if run:
         )
         
         st.download_button("📥 Download Full CSV", df.to_csv(index=False).encode('utf-8'), "leads.csv", "text/csv")
+
