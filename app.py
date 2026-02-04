@@ -13,16 +13,36 @@ def extract_email(text):
     match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
     return match.group(0) if match else "Not Found"
 
-def fetch_pro_data(query, api_key, search_type="search", num=20):
-    url = f"https://google.serper.dev/{search_type}"
-    # We use 'num' to get more data per request
-    payload = json.dumps({"q": query, "num": num})
-    headers = {'X-API-KEY': api_key, 'Content-Type': 'application/json'}
-    try:
-        response = requests.post(url, headers=headers, data=payload, timeout=20)
-        return response.json()
-    except:
-        return {}
+def fetch_pro_data(query, api_key, search_type="search", target_num=100):
+    all_results = []
+    # Serper usually gives 20 per page. To get 100, we need 5 pages.
+    pages_needed = (target_num // 20) + 1
+    
+    for i in range(pages_needed):
+        url = f"https://google.serper.dev/{search_type}"
+        # 'start' tells Google which page to begin on (0, 20, 40, etc.)
+        payload = json.dumps({
+            "q": query, 
+            "num": 20, 
+            "page": i + 1 
+        })
+        headers = {'X-API-KEY': api_key, 'Content-Type': 'application/json'}
+        
+        try:
+            response = requests.post(url, headers=headers, data=payload, timeout=20)
+            data = response.json()
+            
+            # Add results from this page to our main list
+            items = data.get('places' if search_type == "maps" else 'organic', [])
+            all_results.extend(items)
+            
+            # Stop if we hit our target or if there's no more data
+            if len(all_results) >= target_num or not items:
+                break
+        except:
+            break
+            
+    return all_results[:target_num]
 
 def process_results(data, source_name, is_maps=False):
     leads = []
@@ -123,3 +143,4 @@ if start_scan:
             st.download_button("📥 Export Lead Database (CSV)", csv, f"{city}_leads.csv", "text/csv")
         else:
             st.error("No results found. Please check your API credits or try a broader search.")
+
