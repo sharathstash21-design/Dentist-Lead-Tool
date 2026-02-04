@@ -17,28 +17,21 @@ def deduct_remote_credit(email, amount=1):
         return True
     except: return False
 
-def fetch_precious_data(query, pin, api_key, page_num=0, search_url=None):
+def fetch_precious_data(query, api_key, page_num=0, location_query=None):
     url = "https://www.searchapi.io/api/v1/search"
     offset = page_num * 20 
     
-    # Common settings to FORCE INDIA
+    # TRIPLE LOCK: City + State + Country
     params = {
         "engine": "google_maps",
+        "q": query,
+        "location": location_query, # e.g., "Namakkal, Tamil Nadu, India"
         "api_key": api_key,
         "gl": "in",
         "hl": "en",
         "google_domain": "google.co.in",
         "start": offset
     }
-
-    if search_url:
-        # URL MODE: Uses the raw URL but forces India location params
-        params["q"] = query
-        # Note: SearchAPI allows passing a URL directly in some engines, 
-        # but 'q' with local domain is more stable for India results.
-    else:
-        # PIN MODE
-        params["q"] = f"{query} {pin} India"
     
     try:
         response = requests.get(url, params=params, timeout=20)
@@ -47,114 +40,101 @@ def fetch_precious_data(query, pin, api_key, page_num=0, search_url=None):
     except: return []
 
 # --- 2. THE UI & SIDEBAR ---
-st.title("🎯 Nuera Dual-Engine Deep Sniper")
+st.title("🎯 Nuera Precise Location Sniper")
 
 with st.sidebar:
     st.header("⚙️ Sniper Settings")
     api_key_val = st.text_input("SearchAPI Key", value="E7PCYwNsJvWgmyGkqDcMdfYN", type="password")
     
-    # --- METHOD SELECTION ---
-    method = st.radio("Extraction Method", ["PIN Code Mode", "Google URL Mode"])
+    method = st.radio("Extraction Method", ["PIN Code Mode", "URL / City Mode"])
     st.divider()
 
     industry = st.text_input("Business Category", value=st.session_state.get('sniping_category', "Hospital"))
 
     if method == "PIN Code Mode":
         pin_input = st.text_area("Target PIN Codes", value=st.session_state.get('sniping_pincodes', ""))
-        pages_to_scan = st.number_input("Pages per PIN (1 page ≈ 20 leads)", min_value=1, max_value=5, value=1)
+        pages_to_scan = st.number_input("Pages per PIN", min_value=1, max_value=5, value=1)
         pins_list = [p.strip() for p in pin_input.replace("\n", ",").split(",") if p.strip()]
         total_cost = len(pins_list) * pages_to_scan
     else:
-        target_url = st.text_area("Paste Google Maps/Search URL", placeholder="Paste the Namakkal link here...")
-        pages_to_scan = st.number_input("How many pages to deep-scan?", min_value=1, max_value=5, value=1)
-        total_cost = 2 * pages_to_scan # URL mode is 2 credits per page
+        # URL / City Mode - We ask for the location details here
+        st.subheader("📍 Location Lock")
+        city = st.text_input("District / City", value="Namakkal")
+        state = st.text_input("State", value="Tamil Nadu")
+        country = st.text_input("Country", value="India")
+        full_loc = f"{city}, {state}, {country}"
+        
+        target_url = st.text_area("Google Maps URL (Optional)", placeholder="Paste link here if you have one...")
+        pages_to_scan = st.number_input("Total Pages", min_value=1, max_value=5, value=1)
+        total_cost = 2 * pages_to_scan
 
     st.divider()
-    # Logic to enable/disable button
-    can_proceed = (method == "PIN Code Mode" and len(pins_list) > 0) or (method == "Google URL Mode" and target_url)
+    can_proceed = (method == "PIN Code Mode" and len(pins_list) > 0) or (method == "URL / City Mode" and city)
     
     if can_proceed:
-        st.info(f"📊 **Plan:** {method}\n- Cost: {total_cost} Credits")
+        st.info(f"📊 **Cost:** {total_cost} Credits")
         if st.session_state.user_credits < total_cost:
-            st.error("⚠️ Insufficient Credits!")
-            start_btn = st.button("🚀 Start Deep Extraction", disabled=True)
+            st.error("⚠️ Low Balance!")
+            start_btn = st.button("🚀 Start Sniper", disabled=True)
         else:
-            start_btn = st.button("🚀 Start Deep Extraction", use_container_width=True)
+            start_btn = st.button("🚀 Start Sniper", use_container_width=True)
     else:
-        st.warning("Awaiting Input Data...")
-        start_btn = st.button("🚀 Start Deep Extraction", disabled=True)
+        st.warning("Input Required")
+        start_btn = st.button("🚀 Start Sniper", disabled=True)
 
 # --- 3. EXTRACTION ACTION ---
 if start_btn:
-    with st.status("💎 Sniping in Progress...", expanded=True) as status:
+    with st.status("💎 Sniping...", expanded=True) as status:
         all_temp_leads = []
         
-        # Loop for PIN Mode
-        targets = pins_list if method == "PIN Code Mode" else [None]
-        
-        for t in targets:
+        if method == "PIN Code Mode":
+            for pin in pins_list:
+                loc_lock = f"{pin}, Tamil Nadu, India"
+                for page in range(pages_to_scan):
+                    status.write(f"🛰️ Scanning PIN {pin} | Page {page+1}...")
+                    raw_items = fetch_precious_data(f"{industry} {pin}", api_key_val, page, loc_lock)
+                    for item in raw_items:
+                        if pin in item.get('address', ''): # Strict Check
+                            all_temp_leads.append(item)
+        else:
             for page in range(pages_to_scan):
-                label = f"PIN {t}" if t else "URL Scan"
-                status.write(f"🛰️ {label} | Page {page+1}...")
-                
-                raw_items = fetch_precious_data(
-                    industry, t, api_key_val, 
-                    page_num=page, 
-                    search_url=target_url if method == "Google URL Mode" else None
-                )
-                
-                if not raw_items:
-                    break
-                
-                for item in raw_items:
-                    address = item.get('address', 'N/A')
-                    phone_raw = item.get('phone') or item.get('phone_number')
-                    
-                    # Apply Strict PIN filter ONLY in PIN Mode
-                    is_valid = True
-                    if method == "PIN Code Mode" and t not in address:
-                        is_valid = False
-                    
-                    if phone_raw and is_valid:
-                        gps = item.get('gps_coordinates', {})
-                        all_temp_leads.append({
-                            "Name": item.get('title', 'Unknown'),
-                            "Rating": item.get('rating', 0),
-                            "Phone": re.sub(r'\D', '', str(phone_raw))[-10:],
-                            "WhatsApp": f"https://wa.me/91{re.sub(r'\D', '', str(phone_raw))[-10:]}",
-                            "Address": address,
-                            "Website": item.get('website', 'N/A'),
-                            "lat": gps.get('latitude'),
-                            "lng": gps.get('longitude')
-                        })
-                time.sleep(1)
+                status.write(f"📡 Scanning {city} | Page {page+1}...")
+                # We use the full City/State/Country lock here
+                raw_items = fetch_precious_data(industry, api_key_val, page, full_loc)
+                all_temp_leads += raw_items
 
         if all_temp_leads:
-            df_final = pd.DataFrame(all_temp_leads).drop_duplicates(subset=['Phone'])
-            st.session_state['last_extracted_leads'] = df_final
+            formatted = []
+            for item in all_temp_leads:
+                phone_raw = item.get('phone') or item.get('phone_number')
+                if phone_raw:
+                    gps = item.get('gps_coordinates', {})
+                    formatted.append({
+                        "Name": item.get('title', 'Unknown'),
+                        "Rating": item.get('rating', 0),
+                        "Phone": re.sub(r'\D', '', str(phone_raw))[-10:],
+                        "WhatsApp": f"https://wa.me/91{re.sub(r'\D', '', str(phone_raw))[-10:]}",
+                        "Address": item.get('address', 'N/A'),
+                        "Website": item.get('website', 'N/A'),
+                        "lat": gps.get('latitude'),
+                        "lng": gps.get('longitude')
+                    })
             
-            # SYNC CREDITS
+            df_final = pd.DataFrame(formatted).drop_duplicates(subset=['Phone'])
+            st.session_state['last_extracted_leads'] = df_final
             deduct_remote_credit(st.session_state.user_email, total_cost)
             st.session_state.user_credits -= total_cost
-            status.update(label=f"🎯 Success! {len(df_final)} leads saved.", state="complete")
+            status.update(label="🎯 Extraction Done!", state="complete")
         else:
             status.update(label="❌ No leads found.", state="error")
 
-# --- 4. DISPLAY LOGIC ---
+# --- 4. DISPLAY ---
 if 'last_extracted_leads' in st.session_state:
     df = st.session_state['last_extracted_leads']
-    st.success(f"✅ {len(df)} Leads Ready!")
+    st.success(f"✅ {len(df)} Leads found in {city if method != 'PIN Code Mode' else 'PIN Zone'}")
 
-    st.dataframe(
-        df.drop(columns=['lat', 'lng']), 
-        use_container_width=True,
-        column_config={
-            "WhatsApp": st.column_config.LinkColumn("Chat"),
-            "Website": st.column_config.LinkColumn("Visit")
-        }
-    )
+    st.dataframe(df.drop(columns=['lat', 'lng']), use_container_width=True)
 
-    # Map
     valid_map = df.dropna(subset=['lat', 'lng'])
     if not valid_map.empty:
         m = folium.Map(location=[valid_map.iloc[0]['lat'], valid_map.iloc[0]['lng']], zoom_start=12)
@@ -162,4 +142,4 @@ if 'last_extracted_leads' in st.session_state:
             folium.Marker([row['lat'], row['lng']], popup=row['Name']).add_to(m)
         st_folium(m, width=700, height=400)
 
-    st.download_button("📥 Download Excel", df.to_csv(index=False).encode('utf-8'), "nuera_leads.csv")
+    st.download_button("📥 Download", df.to_csv(index=False).encode('utf-8'), "leads.csv")
