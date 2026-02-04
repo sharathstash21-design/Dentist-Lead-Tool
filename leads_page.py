@@ -43,37 +43,35 @@ with st.sidebar:
     target_src = st.selectbox("Source", ["Google Maps", "Google Search"])
     start_btn = st.button("🚀 Start Strict Extraction", use_container_width=True)
 
-# --- 3. EXTRACTION ACTION ---
+# --- 3. UPDATED EXTRACTION ACTION ---
 if start_btn:
-    if st.session_state.user_credits <= 0:
-        st.error("🚫 Out of credits!")
+    pins = [p.strip() for p in pin_input.replace("\n", ",").split(",") if p.strip()]
+    num_pins = len(pins)
+
+    if st.session_state.user_credits < num_pins:
+        st.error(f"🚫 Not enough credits! You need {num_pins} credits to scan these PINs.")
     elif not pin_input:
-        st.warning("⚠️ Please enter or capture PINs first!")
+        st.warning("⚠️ Please enter PINs first!")
     else:
-        # Convert text input into a list of PINs
-        pins = [p.strip() for p in pin_input.replace("\n", ",").split(",") if p.strip()]
-        
         with st.status("💎 Sniping Leads...", expanded=True) as status:
             temp_leads = []
+            pins_actually_scanned = 0
+
             for pin in pins:
                 status.write(f"🛰️ Scanning PIN: {pin}...")
                 raw_items = fetch_precious_data(industry, pin, api_key_val, target_src)
+                pins_actually_scanned += 1
                 
                 for rank, item in enumerate(raw_items, 1):
                     address = item.get('address', 'N/A')
                     phone_raw = item.get('phone') or item.get('phone_number')
                     
-                    # --- THE DISTRICT SHIELD (STRICT FILTER) ---
-                    # Only accept if the lead has a phone AND the PIN matches the address
                     if phone_raw and (pin in address):
                         gps = item.get('gps_coordinates', {})
                         temp_leads.append({
                             "PIN": pin,
                             "Name": item.get('title', 'Unknown'),
-                            "Rating": item.get('rating', 0),
-                            "Reviews": item.get('reviews', 0),
                             "Phone": re.sub(r'\D', '', str(phone_raw))[-10:],
-                            "Website": item.get('website', 'Not Available'),
                             "Address": address,
                             "lat": gps.get('latitude'),
                             "lng": gps.get('longitude'),
@@ -81,18 +79,19 @@ if start_btn:
                         })
 
             if temp_leads:
-                # Deduplicate based on phone number
-                final_df = pd.DataFrame(temp_leads).drop_duplicates(subset=['Phone'])
-                st.session_state['last_extracted_leads'] = final_df
+                # SAVE DATA
+                st.session_state['last_extracted_leads'] = pd.DataFrame(temp_leads).drop_duplicates(subset=['Phone'])
                 
-                # Deduct from Google Sheets
-                deduct_remote_credit(st.session_state.user_email)
-                st.session_state.user_credits -= 1
-                status.update(label="🎯 Extraction Complete!", state="complete")
+                # --- NEW: DEDUCT 1 CREDIT PER PIN SCANNED ---
+                # This keeps your Sheet and API in sync!
+                for _ in range(pins_actually_scanned):
+                    deduct_remote_credit(st.session_state.user_email)
+                
+                st.session_state.user_credits -= pins_actually_scanned
+                status.update(label=f"🎯 Extraction Complete! Used {pins_actually_scanned} credits.", state="complete")
             else:
                 status.update(label="❌ No Strict Matches Found", state="error")
-                st.info(f"No businesses found physically located in PIN {pin_input}.")
-
+                
 # --- 4. DISPLAY LOGIC (Permanent View) ---
 if 'last_extracted_leads' in st.session_state:
     df = st.session_state['last_extracted_leads']
