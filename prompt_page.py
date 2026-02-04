@@ -1,60 +1,54 @@
 import streamlit as st
+from streamlit_folium import st_folium
+import folium
+from geopy.geocoders import Nominatim
 import pandas as pd
 from pypinindia import PincodeData
 
+# --- 1. THE BRAIN ---
+geolocator = Nominatim(user_agent="nuera_lead_pro")
 pin_finder = PincodeData()
 
-st.title("📝 Precision Prompt Generator")
+st.title("🗺️ Map-Based PIN Sniper")
+st.markdown("### *Click the map to grab PIN codes for that area*")
 
-# 1. LOAD & CLEAN THE DATA (The "Cleaner" Logic)
-@st.cache_data
-def get_clean_data():
-    df = pd.DataFrame(pin_finder.data)
-    # Convert everything to Proper Case to fix "salem" vs "SALEM"
-    df['districtname'] = df['districtname'].str.title()
-    df['taluk'] = df['taluk'].str.title()
-    df['statename'] = df['statename'].str.title()
-    return df
+# --- 2. THE MAP VIEW ---
+# Start the map centered on Salem, Tamil Nadu
+m = folium.Map(location=[11.6643, 78.1460], zoom_start=11)
 
-all_data = get_clean_data()
+# Enable clicking on the map
+m.add_child(folium.ClickForMarker(popup="Target Area"))
 
-# 2. SELECTION UI
-col1, col2 = st.columns(2)
+# Show the map in Streamlit
+map_data = st_folium(m, height=400, width=700)
 
-with col1:
-    states = sorted(all_data['statename'].unique())
-    state = st.selectbox("Select State", states, index=states.index("Tamil Nadu") if "Tamil Nadu" in states else 0)
+# --- 3. DATA EXTRACTION LOGIC ---
+if map_data["last_clicked"]:
+    lat = map_data["last_clicked"]["lat"]
+    lng = map_data["last_clicked"]["lng"]
     
-    districts = sorted(all_data[all_data['statename'] == state]['districtname'].unique())
-    district = st.selectbox("Select District", districts)
-
-with col2:
-    # Get Taluks ONLY for the selected district to remove "Salem/Erode" from Namakkal
-    mask = (all_data['districtname'] == district)
-    taluks = sorted(all_data[mask]['taluk'].unique())
+    st.write(f"📍 Selected Coordinates: {lat:.4f}, {lng:.4f}")
     
-    sub_district = st.selectbox("Select Sub-District (Taluk)", ["All Taluks"] + taluks)
+    # Find the PIN code for this exact spot
+    try:
+        location = geolocator.reverse((lat, lng))
+        address = location.raw.get('address', {})
+        found_pin = address.get('postcode')
+        
+        if found_pin:
+            st.success(f"💎 Found PIN Code: {found_pin}")
+            
+            # Send to Sniper
+            if st.button("🚀 Send to Sniper"):
+                st.session_state['sniping_pincodes'] = str(found_pin)
+                st.info("Now switch to 'Lead Sniper' tab!")
+        else:
+            st.warning("No PIN found at this exact spot. Try clicking a nearby building.")
+    except:
+        st.error("Connection error. Please try again.")
 
-# 3. INDUSTRY & GENERATE
+# --- 4. RADIUS SEARCH (Bonus) ---
 st.divider()
-industry = st.text_input("Business Category", "Hotels", key="ind_gen")
-
-if st.button("💎 Send to Sniper", use_container_width=True):
-    # Filter for the specific PINs
-    if sub_district == "All Taluks":
-        final_pins = all_data[all_data['districtname'] == district]['pincode'].unique()
-    else:
-        final_pins = all_data[(all_data['districtname'] == district) & 
-                              (all_data['taluk'] == sub_district)]['pincode'].unique()
-    
-    if len(final_pins) > 0:
-        pin_string = ", ".join([str(p) for p in final_pins])
-        
-        # Sync to the Sniper
-        st.session_state['sniping_pincodes'] = pin_string
-        st.session_state['sniping_category'] = industry 
-        
-        st.success(f"✅ Found {len(final_pins)} PINs for {sub_district} in {district}!")
-        st.info("🎯 switch to 'Lead Sniper' tab now.")
-    else:
-        st.error("No PIN codes found. Try selecting 'All Taluks'.")
+st.header("📏 Radius Search")
+radius = st.slider("Search Radius (KM)", 1, 20, 5)
+st.write(f"This will find all business within {radius}km of your map click.")
