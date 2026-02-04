@@ -17,15 +17,15 @@ def deduct_remote_credit(email, amount=1):
         return True
     except: return False
 
-def fetch_precious_data(query, api_key, page_num=0, location_query=None):
+def fetch_precious_data(query, api_key, page_num=0, location_lock=None):
     url = "https://www.searchapi.io/api/v1/search"
     offset = page_num * 20 
     
-    # FORCING GOOGLE MAPS ENGINE ONLY - This stops the Maharashtra jumping
+    # FORCING GOOGLE MAPS ENGINE
     params = {
         "engine": "google_maps",
         "q": query,
-        "location": location_query, 
+        "location": location_lock, 
         "api_key": api_key,
         "gl": "in",
         "hl": "en",
@@ -49,10 +49,10 @@ with st.sidebar:
     method = st.radio("Target Method", ["PIN Code Mode", "City/District Mode"])
     st.divider()
 
-    industry = st.text_input("Business Category", value=st.session_state.get('sniping_category', "Hospital"))
+    industry = st.text_input("Business Category", value="Hospital")
 
     if method == "PIN Code Mode":
-        pin_input = st.text_area("Target PIN Codes", value=st.session_state.get('sniping_pincodes', ""))
+        pin_input = st.text_area("Target PIN Codes", value="638462")
         pages_to_scan = st.number_input("Pages per PIN", 1, 5, 1)
         targets = [p.strip() for p in pin_input.replace("\n", ",").split(",") if p.strip()]
         total_cost = len(targets) * pages_to_scan
@@ -84,21 +84,19 @@ if start_btn:
         
         for t in targets:
             # We create a specific lock for every scan
-            lock = f"{t}, Tamil Nadu, India" if method == "PIN Code Mode" else full_loc
+            lock_query = f"{t}, Tamil Nadu, India" if method == "PIN Code Mode" else full_loc
+            search_query = f"{industry} in {t}"
             
             for page in range(pages_to_scan):
                 status.write(f"🛰️ Scanning {t} | Page {page+1}...")
-                raw_items = fetch_precious_data(f"{industry} {t}", api_key_val, page, lock)
+                raw_items = fetch_precious_data(search_query, api_key_val, page, lock_query)
                 
                 for item in raw_items:
                     addr = item.get('address', '')
                     phone = item.get('phone') or item.get('phone_number')
                     
-                    # --- THE "MAHARASHTRA BLOCKER" ---
-                    # Check if the target state is actually in the address
-                    target_state = "Tamil Nadu" if method == "PIN Code Mode" else state
-                    
-                    if phone and (target_state.lower() in addr.lower()):
+                    # Check if the state/city is in the address to avoid Maharashtra leads
+                    if phone and ("Tamil Nadu" in addr or t in addr):
                         gps = item.get('gps_coordinates', {})
                         all_temp_leads.append({
                             "Name": item.get('title', 'Unknown'),
@@ -119,7 +117,8 @@ if start_btn:
             st.session_state.user_credits -= total_cost
             status.update(label=f"🎯 Success! {len(df_final)} local leads found.", state="complete")
         else:
-            status.update(label="❌ No local leads found. Google restricted this area.", state="error")
+            status.update(label="❌ No local leads found.", state="error")
+            st.warning("Try searching for a broader category or checking your API key.")
 
 # --- 4. DISPLAY ---
 if 'last_extracted_leads' in st.session_state:
