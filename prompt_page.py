@@ -20,3 +20,13 @@ if st.button("💎 Generate & Send to Sniper"):
         
         st.success(f"✅ Found {len(results)} PINs and sent them to the Lead Sniper!")
         st.info("🎯 Now click on 'Lead Sniper' in the sidebar to start extracting.")
+
+
+
+if st.button("💎 Generate & Send to Sniper"):
+    # ... your existing pin generation code ...
+    pin_string = ", ".join([str(p) for p in results])
+    
+    # Save to the "Brain" of the app
+    st.session_state['ready_pins'] = pin_string
+    st.success("✅ PINs sent! Click 'Lead Sniper' to start.")
