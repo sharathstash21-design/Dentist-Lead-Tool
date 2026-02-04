@@ -10,7 +10,7 @@ def extract_email(text):
     match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
     return match.group(0) if match else "Not Available"
 
-def fetch_universal(query, pin, api_key, target_source):
+def fetch_precious_data(query, pin, api_key, target_source):
     url = "https://www.searchapi.io/api/v1/search"
     is_maps = (target_source == "Google Maps")
     
@@ -25,8 +25,13 @@ def fetch_universal(query, pin, api_key, target_source):
     try:
         response = requests.get(url, params=params, timeout=20)
         data = response.json()
-        # SearchAPI organizes data into 'places' for Maps
-        return data.get('places', []) if is_maps else data.get('organic_results', [])
+        
+        # SearchAPI organizes Maps results in 'places' or 'local_results'
+        results = data.get('places', []) or data.get('local_results', [])
+        if not results and not is_maps:
+            results = data.get('organic_results', [])
+            
+        return results
     except:
         return []
 
@@ -35,11 +40,11 @@ st.title("🎯 Nuera Precious Lead Sniper")
 
 with st.sidebar:
     st.header("⚙️ Sniper Settings")
-    api_key_val = st.text_input("SearchAPI Key", value="E7PCYwNsJvWgmyGkqDcMdfYN", type="password")
-    industry = st.text_input("Business Type", value=st.session_state.get('sniping_category', "Hotels"))
-    pin_input = st.text_area("PIN Codes", value=st.session_state.get('sniping_pincodes', ""))
-    target_src = st.selectbox("Source", ["Google Maps", "Google Search"])
-    start_btn = st.button("🚀 Start Precious Extraction")
+    api_key_val = st.text_input("SearchAPI Key", value="E7PCYwNsJvWgmyGkqDcMdfYN", type="password", key="api_snip")
+    industry = st.text_input("Business Type", value=st.session_state.get('sniping_category', "Dentist"), key="ind_snip")
+    pin_input = st.text_area("PIN Codes", value=st.session_state.get('sniping_pincodes', ""), key="pins_snip")
+    target_src = st.selectbox("Source", ["Google Maps", "Google Search"], key="src_snip")
+    start_btn = st.button("🚀 Start Precious Extraction", key="run_snip")
 
 if start_btn:
     pins = [p.strip() for p in pin_input.replace("\n", ",").split(",") if p.strip()]
@@ -50,18 +55,19 @@ if start_btn:
 
     for idx, pin in enumerate(pins):
         status_msg.info(f"📍 Sniping PIN: {pin} ({idx+1}/{len(pins)})")
-        raw_items = fetch_universal(industry, pin, api_key_val, target_src)
+        raw_items = fetch_precious_data(industry, pin, api_key_val, target_src)
         
         for rank, item in enumerate(raw_items, 1):
+            # Extracting all the 'Precious' fields from SearchAPI
             phone_raw = item.get('phone') or item.get('phone_number')
+            
             if phone_raw:
                 clean_phone = re.sub(r'\D', '', str(phone_raw))[-10:]
                 
-                # PULLING THE PRECIOUS DATA
                 all_leads.append({
                     "GMB Rank": rank,
                     "Business Name": item.get('title', 'Unknown'),
-                    "Rating ⭐": item.get('rating', 'No Rating'),
+                    "Rating ⭐": item.get('rating', 'N/A'),
                     "Reviews 💬": item.get('reviews', 0),
                     "Phone": clean_phone,
                     "Email": extract_email(str(item)),
@@ -77,30 +83,37 @@ if start_btn:
     if all_leads:
         df = pd.DataFrame(all_leads).drop_duplicates(subset=['Phone'])
         
-        # --- 3. POTENTIAL DATA SUMMARY ---
-        st.success(f"✅ Found {len(df)} Precious Leads!")
+        # --- 3. SALES METRICS ---
+        st.success(f"✅ Extracted {len(df)} High-Quality Leads!")
         
-        c1, c2, c3 = st.columns(3)
+        m1, m2, m3 = st.columns(3)
         no_web = len(df[df['Website'] == "Not Available"])
-        low_rank = len(df[df['GMB Rank'] > 5])
+        low_rated = len(df[(df['Rating ⭐'] != 'N/A') & (df['Rating ⭐'] < 4.0)])
         
-        c1.metric("Total Extracted", len(df))
-        c2.metric("No Website (Sales!)", no_web)
-        c3.metric("Need SEO (Rank > 5)", low_rank)
+        m1.metric("Total Leads", len(df))
+        m2.metric("No Website (Web Sales)", no_web)
+        m3.metric("Low Rated (SEO Sales)", low_rated)
 
         st.divider()
         
-        # Display with professional links
+        # Professional Data Table
         st.dataframe(
             df, 
             column_config={
                 "WhatsApp": st.column_config.LinkColumn("Chat"),
-                "Website": st.column_config.LinkColumn("Visit"),
+                "Website": st.column_config.LinkColumn("Website"),
             },
             use_container_width=True,
             hide_index=True
         )
         
-        st.download_button("📥 Download Database", df.to_csv(index=False).encode('utf-8'), "precious_leads.csv", "text/csv")
+        # CSV Download
+        st.download_button(
+            "📥 Download Precious Database (CSV)", 
+            df.to_csv(index=False).encode('utf-8'), 
+            f"precious_{industry}.csv", 
+            "text/csv",
+            key="dl_btn"
+        )
     else:
-        st.error("No results found. Try a different PIN or Category.")
+        st.error("❌ No results found. Try switching to 'Google Maps' or checking your PIN codes.")
