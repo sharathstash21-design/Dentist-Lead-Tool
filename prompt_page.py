@@ -2,35 +2,33 @@ import streamlit as st
 import pandas as pd
 from pypinindia import PincodeData
 
-# Load the Indian PIN database
+# Load the database
 pin_finder = PincodeData()
 
 st.title("📝 Precision Prompt Generator")
-st.markdown("### *Find every PIN code in your target area*")
 
-# 1. THE DRILL-DOWN FILTERS
-st.header("📍 Step 1: Define Target Area")
+with st.sidebar:
+    st.header("⚙️ Admin")
+    # Unique key for this page
+    st.text_input("API Key", value="7ab11ec8...", type="password", key="api_gen")
+
+# 1. Selection UI
 col1, col2 = st.columns(2)
-
 with col1:
     state_list = pin_finder.get_states()
-    state = st.selectbox("Select State", state_list, index=state_list.index("TAMIL NADU") if "TAMIL NADU" in state_list else 0)
-    
-    available_districts = pin_finder.get_districts(state_name=state)
-    district = st.selectbox("Select District", available_districts)
+    state = st.selectbox("State", state_list, index=state_list.index("TAMIL NADU") if "TAMIL NADU" in state_list else 0)
+    district = st.selectbox("District", pin_finder.get_districts(state_name=state))
 
 with col2:
-    # Upgrade: Get Taluks for the selected district
     all_data = pd.DataFrame(pin_finder.data)
     mask = (all_data['districtname'].str.upper() == district.upper())
     taluks = all_data[mask]['taluk'].unique()
-    sub_district = st.selectbox("Select Sub-District (Taluk)", ["All Taluks"] + list(taluks))
+    sub_district = st.selectbox("Sub-District (Taluk)", ["All Taluks"] + list(taluks))
 
-# 2. GENERATE & SEND
-st.divider()
-industry = st.text_input("Business Category to Scrape", "Dentist")
+# 2. Industry input
+industry = st.text_input("Business Category (e.g., Hotels, Dentist)", "Hotels", key="ind_gen")
 
-if st.button("💎 Generate & Send to Sniper"):
+if st.button("💎 Send to Sniper", use_container_width=True):
     if sub_district == "All Taluks":
         results = pin_finder.search_by_district(district, state)
     else:
@@ -39,22 +37,9 @@ if st.button("💎 Generate & Send to Sniper"):
     if results:
         pin_string = ", ".join([str(p) for p in results])
         
-        # SHARED BRAIN: Use the exact same key as the Sniper page
+        # --- THE SYNC LOGIC ---
         st.session_state['sniping_pincodes'] = pin_string
+        st.session_state['sniping_category'] = industry 
         
-        st.success(f"✅ Found {len(results)} PINs for {sub_district}!")
-        st.info("🎯 Now click on 'Lead Sniper' in the sidebar to start.")
-    else:
-        st.error("No PIN codes found for this combination.")
-
-# Inside your 'Generate & Send to Sniper' button code:
-if st.button("💎 Generate & Send to Sniper"):
-    # ... existing pin logic ...
-    if results:
-        pin_string = ", ".join([str(p) for p in results])
-        
-        # SAVE BOTH PINs AND THE CATEGORY
-        st.session_state['sniping_pincodes'] = pin_string
-        st.session_state['sniping_category'] = industry  # <--- ADD THIS LINE
-        
-        st.success(f"✅ Found {len(results)} PINs for {sub_district} and set category to {industry}!")
+        st.success(f"✅ Sent {len(results)} PINs for {industry} to the Sniper!")
+        st.info("🎯 Now switch to 'Lead Sniper' in the sidebar.")
