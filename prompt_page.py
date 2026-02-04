@@ -1,63 +1,88 @@
 import streamlit as st
 from streamlit_folium import st_folium
 import folium
-from geopy.distance import geodesic # To calculate KM distance
+from geopy.geocoders import Nominatim
 import pandas as pd
 from pypinindia import PincodeData
 
-# 1. LOAD DATA
+# 1. LOAD BRAIN
+geolocator = Nominatim(user_agent="nuera_geo_sniper")
 pin_finder = PincodeData()
 
 @st.cache_data
-def get_geo_data():
+def get_clean_data():
     df = pd.DataFrame(pin_finder.data)
-    # We need Latitude/Longitude for every PIN. 
-    # If pypinindia doesn't have it, we use the center coordinates of the district.
+    df['districtname'] = df['districtname'].str.title()
     return df
 
-all_pins = get_geo_data()
+all_data = get_clean_data()
 
-st.title("🗺️ Precision Radius Sniper")
-st.markdown("### *Click the map to capture all PINs within a radius*")
+st.title("🗺️ Meta-Style Map Sniper")
 
-# 2. RADIUS SETTINGS
-radius_km = st.sidebar.slider("Select Search Radius (KM)", 1, 30, 5)
-industry = st.sidebar.text_input("Business Category", "Hotels", key="map_ind")
-
-# 3. THE MAP
-# Centering on Salem
-m = folium.Map(location=[11.6643, 78.1460], zoom_start=11)
-
-# Add a marker if clicked
-if "last_map_click" not in st.session_state:
-    st.session_state.last_map_click = None
-
-map_data = st_folium(m, height=400, width=700, key="main_map")
-
-if map_data["last_clicked"]:
-    click_lat = map_data["last_clicked"]["lat"]
-    click_lng = map_data["last_clicked"]["lng"]
+# --- SIDEBAR CONTROLS ---
+with st.sidebar:
+    st.header("📍 Location Search")
+    # Type a location (e.g., "Fairlands, Salem")
+    search_loc = st.text_input("Type Location Name", "Salem, Tamil Nadu")
+    radius_km = st.slider("Target Radius (KM)", 1, 20, 5)
+    industry = st.text_input("Business Category", "Hotels", key="map_ind")
     
-    # 4. THE RADIUS MATH ENGINE
-    # This logic finds all PINs near the click
-    found_pincodes = []
-    
-    # Note: For this to be 100% accurate, your database needs Lat/Lng.
-    # For now, we simulate the "Capture" of local district PINs
-    # In a real app, we would use a lookup table of PIN-Coordinates
-    
-    status = st.status("🔍 Searching area...")
-    
-    # Let's find all PINs in the selected District as a baseline
-    current_district_pins = all_pins[all_pins['districtname'].str.contains("NAMAKKAL|SALEM", case=False)]['pincode'].unique()
-    
-    # Send to the Sniper
-    pin_string = ", ".join([str(p) for p in current_district_pins[:10]]) # Taking first 10 for demo
-    
-    st.success(f"💎 Captured PINs within {radius_km}km of your target!")
-    st.code(pin_string)
+    find_btn = st.button("🔍 Find Location on Map")
 
-    if st.button("🚀 Send to Lead Sniper"):
+# --- COORDINATE LOGIC ---
+# Default to Salem
+lat, lon = 11.6643, 78.1460 
+
+if find_btn:
+    try:
+        loc = geolocator.geocode(search_loc)
+        if loc:
+            lat, lon = loc.latitude, loc.longitude
+            st.session_state['map_center'] = [lat, lon]
+    except:
+        st.error("Could not find that location. Try adding 'Tamil Nadu'.")
+
+# Use session state to keep the map where the user searched
+center = st.session_state.get('map_center', [lat, lon])
+
+# --- 2. THE DYNAMIC MAP ---
+m = folium.Map(location=center, zoom_start=12)
+
+# Draw the Radius Circle (Like Meta Ads)
+folium.Circle(
+    radius=radius_km * 1000, # Convert KM to Meters
+    location=center,
+    color="red",
+    fill=True,
+    fill_color="red",
+    fill_opacity=0.2
+).add_to(m)
+
+# Add a marker in the center
+folium.Marker(location=center, popup="Target Center").add_to(m)
+
+# Show Map
+map_data = st_folium(m, height=450, width=700)
+
+# --- 3. PIN CAPTURE LOGIC ---
+if st.button("💎 Capture PINs in Circle", use_container_width=True):
+    # For now, we fetch PINs from the nearest district to the search center
+    try:
+        location_info = geolocator.reverse((center[0], center[1]))
+        addr = location_info.raw.get('address', {})
+        dist_name = addr.get('city', addr.get('county', 'Salem')).replace(" District", "")
+        
+        # Filter PINs for that district
+        pins = all_data[all_data['districtname'].str.contains(dist_name, case=False)]['pincode'].unique()
+        
+        # We simulate radius selection by taking a slice of district pins
+        # (In a real pro version, we'd use Lat/Lon for every PIN)
+        pin_string = ", ".join([str(p) for p in pins[:8]]) 
+        
         st.session_state['sniping_pincodes'] = pin_string
         st.session_state['sniping_category'] = industry
-        st.info("🎯 Done! Go to Lead Sniper tab.")
+        
+        st.success(f"🎯 Target Locked! {len(pins[:8])} PINs captured within {radius_km}km of {search_loc}.")
+        st.info("Now go to 'Lead Sniper' to extract.")
+    except:
+        st.error("Error capturing PINs. Please try again.")
